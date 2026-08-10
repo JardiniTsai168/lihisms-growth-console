@@ -382,8 +382,6 @@ function App() {
             <h1>把素材、draft、數據、建議，收進同一條可回溯的成長流水線。</h1>
             <p className="hero-note">Demo dashboard now normalizes all spend and CPA inputs in USD.</p>
           </div>
-        </div>
-        <div className="hero-side">
           <div className="hero-metrics">
             <article>
               <span>Main KPI</span>
@@ -398,20 +396,20 @@ function App() {
               <strong>系統只建議，你才執行</strong>
             </article>
           </div>
-
-          <section className="hero-contract" aria-label="Operating contract">
-            <div className="hero-contract-header">
-              <p className="eyebrow">Operating contract</p>
-              <h2>第一版邊界</h2>
-            </div>
-            <ul>
-              <li>每次只測 1 個 use case，搭配 1 到 2 個 benefits。</li>
-              <li>每輪只產 3 張圖，走同一個 angle 的變體。</li>
-              <li>素材先人工審核，再自動建 Facebook draft。</li>
-              <li>Airbyte 只拉必要欄位，先不做全量 data warehouse。</li>
-            </ul>
-          </section>
         </div>
+
+        <section className="hero-contract" aria-label="Operating contract">
+          <div className="hero-contract-header">
+            <p className="eyebrow">Operating contract</p>
+            <h2>第一版邊界</h2>
+          </div>
+          <ul>
+            <li>每次只測 1 個 use case，搭配 1 到 2 個 benefits。</li>
+            <li>每輪只產 3 張圖，走同一個 angle 的變體。</li>
+            <li>素材先人工審核，再自動建 Facebook draft。</li>
+            <li>Airbyte 只拉必要欄位，先不做全量 data warehouse。</li>
+          </ul>
+        </section>
       </header>
 
       <main className="dashboard">

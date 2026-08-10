@@ -15,10 +15,9 @@
 
 .hero-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
-  gap: clamp(20px, 4vw, 56px);
+  gap: 18px;
   border-radius: 36px;
-  padding: clamp(24px, 4vw, 44px);
+  padding: clamp(22px, 3.4vw, 34px);
   position: relative;
   overflow: clip;
 }
@@ -37,15 +36,16 @@
 
 .brand-cluster {
   display: grid;
-  gap: 22px;
+  gap: 16px;
+  max-width: 1000px;
 }
 
 .hero-note {
-  margin-top: 16px;
-  max-width: 44ch;
+  margin-top: 12px;
+  max-width: 52ch;
   color: var(--muted-strong);
-  font-size: 0.92rem;
-  line-height: 1.6;
+  font-size: 0.88rem;
+  line-height: 1.55;
 }
 
 .brand-mark {
@@ -56,15 +56,16 @@
 .hero-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
   align-content: start;
+  margin-top: 4px;
 }
 
 .hero-metrics article,
 .funnel-row article,
 .hero-contract {
-  padding: 18px 20px;
-  border-radius: 24px;
+  padding: 14px 16px;
+  border-radius: 20px;
   background: color-mix(in oklch, var(--panel-alt) 92%, white 8%);
   border: 1px solid color-mix(in oklch, var(--line) 82%, transparent 18%);
 }
@@ -72,42 +73,44 @@
 .hero-metrics span,
 .funnel-row span {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: rgba(26, 26, 94, 0.6);
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .hero-metrics strong,
 .funnel-row strong {
   color: var(--brand-deep);
-  font-size: 1.25rem;
+  font-size: 1.02rem;
   font-weight: 700;
-}
-
-.hero-side {
-  display: grid;
-  gap: 14px;
-  align-content: start;
 }
 
 .hero-contract {
   display: grid;
-  gap: 14px;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
 }
 
 .hero-contract-header h2 {
   margin: 0;
+  font-size: 1.08rem;
 }
 
 .hero-contract ul {
   margin: 0;
-  padding-left: 20px;
-  display: grid;
-  gap: 8px;
+  padding-left: 18px;
+  columns: 2;
+  column-gap: 28px;
   color: var(--muted-strong);
-  line-height: 1.5;
+  line-height: 1.45;
+}
+
+.hero-contract li {
+  break-inside: avoid;
+  margin-bottom: 8px;
 }
 
 .dashboard {
@@ -478,10 +481,10 @@ textarea {
 }
 
 .hero-panel h1 {
-  font-size: clamp(1.5rem, 2.4vw, 2.1rem);
-  line-height: 1.02;
+  font-size: clamp(1.42rem, 2.2vw, 1.92rem);
+  line-height: 1.04;
   letter-spacing: -0.05em;
-  max-width: 24ch;
+  max-width: 26ch;
   text-wrap: balance;
 }
 
@@ -540,9 +543,16 @@ textarea {
   }
 
   .library-layout,
-  .hero-panel,
   .hero-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .hero-contract {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-contract ul {
+    columns: 1;
   }
 
   .library-list {
