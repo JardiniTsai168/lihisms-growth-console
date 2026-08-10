@@ -111,6 +111,7 @@ function App() {
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [productImageFile, setProductImageFile] = useState<File | null>(null)
   const [requestError, setRequestError] = useState<string | null>(null)
+  const [batchStatusMessage, setBatchStatusMessage] = useState<string | null>(null)
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false)
   const [approvingCreativeId, setApprovingCreativeId] = useState<string | null>(null)
 
@@ -134,6 +135,11 @@ function App() {
       creative.selectedPlatforms.length > 0 &&
       !alreadyDrafted
     )
+  })
+
+  const latestBatchLooksStub = batchCreatives.length > 0 && batchCreatives.every((creative) => {
+    const stubSignal = `${creative.deliveryNote} ${creative.body} ${creative.squareAsset}`.toLowerCase()
+    return stubSignal.includes('stub') || stubSignal.includes('/assets/creative_00')
   })
 
   const funnelTotals = useMemo(() => {
@@ -293,13 +299,17 @@ function App() {
     }
 
     setRequestError(null)
+    setBatchStatusMessage('正在送到 creative.bktsai.link，等待 3 組審稿素材回傳…')
     setIsGeneratingBatch(true)
 
     try {
-      const response = await fetch(`${CREATIVE_API_BASE}/generate-review`, {
-        method: 'POST',
-        body: payload,
-      })
+      const [response] = await Promise.all([
+        fetch(`${CREATIVE_API_BASE}/generate-review`, {
+          method: 'POST',
+          body: payload,
+        }),
+        waitAtLeast(900),
+      ])
 
       if (!response.ok) {
         throw new Error(await readErrorMessage(response))
@@ -361,7 +371,9 @@ function App() {
         batches: [batch, ...current.batches],
         creatives: [...creatives, ...current.creatives],
       }))
+      setBatchStatusMessage(`已回傳 ${result.creatives.length} 組審稿素材，請先人工審核再選平台。`)
     } catch (error) {
+      setBatchStatusMessage(null)
       setRequestError(error instanceof Error ? error.message : '批次生成失敗。')
     } finally {
       setIsGeneratingBatch(false)
@@ -584,6 +596,7 @@ function App() {
     setLogoFile(null)
     setProductImageFile(null)
     setRequestError(null)
+    setBatchStatusMessage(null)
     setIsGeneratingBatch(false)
     setApprovingCreativeId(null)
   }
@@ -958,9 +971,10 @@ function App() {
             onClick={handleGenerateBatch}
             disabled={isGeneratingBatch}
           >
-            {isGeneratingBatch ? 'Generating…' : 'Generate Ads'}
+            {isGeneratingBatch ? 'Generating 3 creatives…' : 'Generate Ads'}
           </button>
 
+          {batchStatusMessage ? <p className="helper-copy status-banner">{batchStatusMessage}</p> : null}
           {requestError ? <p className="helper-copy error-banner">{requestError}</p> : null}
 
           {latestBatch ? (
@@ -982,8 +996,19 @@ function App() {
             <span className="pill muted">先選平台，再按 Approved</span>
           </div>
 
+          {latestBatchLooksStub ? (
+            <p className="helper-copy warning-banner">
+              目前後端回來的仍是 stub 素材與 stub 文案，代表前端已串上 live endpoint，但 creative.bktsai.link 尚未切到真生成流程。
+            </p>
+          ) : null}
+
           <div className="creative-grid">
-            {batchCreatives.length === 0 ? (
+            {isGeneratingBatch ? (
+              <article className="creative-empty-state loading-state">
+                <h3>素材生成中</h3>
+                <p>請稍候，系統正在等待 creative.bktsai.link 回傳 3 組 1:1 審稿素材與文案。</p>
+              </article>
+            ) : batchCreatives.length === 0 ? (
               <article className="creative-empty-state">
                 <h3>還沒有回傳素材</h3>
                 <p>上傳 logo 後按 `Generate Ads`，這裡才會出現 creative.bktsai.link 回來的 1:1 素材與文案。</p>
@@ -1347,6 +1372,12 @@ async function readErrorMessage(response: Response) {
   } catch {
     return `Request failed with ${response.status}`
   }
+}
+
+function waitAtLeast(durationMs: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs)
+  })
 }
 
 export default App
