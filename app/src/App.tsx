@@ -10,11 +10,12 @@ import type {
   DraftAd,
   LibraryKind,
   OptimizationRules,
+  Platform,
   StrategyRecord,
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
-const STORAGE_KEY = 'lihisms-growth-console-v1'
+const STORAGE_KEY = 'lihisms-growth-console-v2'
 
 const rejectionReasons = [
   '賣點不對',
@@ -26,6 +27,10 @@ const rejectionReasons = [
 ]
 
 const colorModes = ['Signal board', 'Proof ledger', 'Promo burst']
+const copyModes: CreativeAsset['copyMode'][] = ['品牌', '轉單']
+const modelSettings = ['產品主視覺', '隨機模特兒', '產品情境照']
+const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Google Display', 'LINE']
+
 const usd = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -33,35 +38,59 @@ const usd = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 })
 
+const buildEmptyForm = () => ({
+  kind: 'use_case' as LibraryKind,
+  title: '',
+  summary: '',
+  notes: '',
+  productLink: '',
+  logoAsset: '',
+  productAsset: '',
+  standardTags: [] as string[],
+  freeformTags: '',
+})
+
+const buildBatchForm = (library: StrategyRecord[]) => {
+  const useCase = library.find((record) => record.kind === 'use_case' && record.status === 'active')
+  const benefits = library.filter((record) => record.kind === 'benefit' && record.status === 'active')
+
+  return {
+    useCaseId: useCase?.id ?? '',
+    benefitIds: benefits.slice(0, 3).map((item) => item.id),
+    productLink: useCase?.productLink ?? '',
+    logoAsset: useCase?.logoAsset ?? 'lihi-logo-primary.png',
+    productAsset: useCase?.productAsset ?? '',
+    additionalNotes: '',
+  }
+}
+
 function App() {
   const logoUrl = `${import.meta.env.BASE_URL}lihi-logo-primary.png`
   const [state, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
   const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState({
-    kind: 'use_case' as LibraryKind,
-    title: '',
-    summary: '',
-    notes: '',
-    standardTags: [] as string[],
-    freeformTags: '',
-  })
-  const [batchForm, setBatchForm] = useState(() => {
-    const useCase = state.library.find((record) => record.kind === 'use_case' && record.status === 'active')
-    const benefits = state.library.filter((record) => record.kind === 'benefit' && record.status === 'active')
-    const proof = state.library.find((record) => record.kind === 'proof' && record.status === 'active')
-    const template = state.library.find((record) => record.kind === 'template' && record.status === 'active')
-
-    return {
-      useCaseId: useCase?.id ?? '',
-      benefitIds: benefits.slice(0, 2).map((item) => item.id),
-      proofIds: proof ? [proof.id] : [],
-      templateId: template?.id ?? '',
-    }
-  })
+  const [form, setForm] = useState(buildEmptyForm)
+  const [batchForm, setBatchForm] = useState(() => buildBatchForm(initialState.library))
 
   const activeLibrary = state.library.filter((record) => record.status === 'active')
   const latestBatch = state.batches[0]
+
+  const availableLogoAssets = Array.from(
+    new Set(
+      activeLibrary
+        .map((record) => record.logoAsset.trim())
+        .filter(Boolean)
+        .concat('lihi-logo-primary.png'),
+    ),
+  )
+
+  const availableProductAssets = Array.from(
+    new Set(
+      activeLibrary
+        .map((record) => record.productAsset.trim())
+        .filter(Boolean),
+    ),
+  )
 
   const batchCreatives = useMemo(() => {
     if (!latestBatch) {
@@ -74,7 +103,12 @@ function App() {
 
   const approvedReadyForDraft = state.creatives.filter((creative) => {
     const alreadyDrafted = state.drafts.some((draft) => draft.creativeId === creative.id)
-    return creative.reviewStatus === 'approved' && !alreadyDrafted
+    return (
+      creative.reviewStatus === 'approved' &&
+      creative.formatStatus === 'formats_ready' &&
+      creative.selectedPlatforms.length > 0 &&
+      !alreadyDrafted
+    )
   })
 
   const funnelTotals = useMemo(() => {
@@ -114,6 +148,9 @@ function App() {
       title: form.title.trim(),
       summary: form.summary.trim(),
       notes: form.notes.trim(),
+      productLink: form.productLink.trim(),
+      logoAsset: form.logoAsset.trim(),
+      productAsset: form.productAsset.trim(),
       standardTags: form.standardTags,
       freeformTags: form.freeformTags
         .split(',')
@@ -135,14 +172,7 @@ function App() {
     }))
 
     setEditingId(null)
-    setForm({
-      kind: 'use_case',
-      title: '',
-      summary: '',
-      notes: '',
-      standardTags: [],
-      freeformTags: '',
-    })
+    setForm(buildEmptyForm())
   }
 
   const handleEditRecord = (record: StrategyRecord) => {
@@ -152,6 +182,9 @@ function App() {
       title: record.title,
       summary: record.summary,
       notes: record.notes,
+      productLink: record.productLink,
+      logoAsset: record.logoAsset,
+      productAsset: record.productAsset,
       standardTags: record.standardTags,
       freeformTags: record.freeformTags.join(', '),
     })
@@ -166,11 +199,22 @@ function App() {
     }))
   }
 
+  const handleUseCaseChange = (useCaseId: string) => {
+    const useCase = activeLibrary.find((record) => record.id === useCaseId)
+    setBatchForm((current) => ({
+      ...current,
+      useCaseId,
+      productLink: useCase?.productLink ?? current.productLink,
+      logoAsset: useCase?.logoAsset ?? current.logoAsset,
+      productAsset: useCase?.productAsset ?? current.productAsset,
+    }))
+  }
+
   const handleGenerateBatch = () => {
     if (
       !batchForm.useCaseId ||
-      batchForm.benefitIds.length === 0 ||
-      !batchForm.templateId
+      batchForm.benefitIds.length < 3 ||
+      !batchForm.logoAsset.trim()
     ) {
       return
     }
@@ -180,55 +224,76 @@ function App() {
     const benefits = batchForm.benefitIds
       .map((id) => activeLibrary.find((record) => record.id === id))
       .filter((record): record is StrategyRecord => Boolean(record))
-    const proofs = batchForm.proofIds
-      .map((id) => activeLibrary.find((record) => record.id === id))
-      .filter((record): record is StrategyRecord => Boolean(record))
-    const template = activeLibrary.find((record) => record.id === batchForm.templateId)
 
-    if (!useCase || benefits.length === 0 || !template) {
+    if (!useCase || benefits.length < 3) {
       return
     }
 
     const angleId = `ANGLE-${slugify(useCase.title)}-${slugify(benefits[0].title)}`
       .toUpperCase()
       .slice(0, 28)
-
     const batchId = `batch-${timestamp}`
-    const promptVersion = `v1.${state.batches.length + 1}.0`
+    const promptVersion = `v2.${state.batches.length + 1}.0`
+    const productLink = batchForm.productLink.trim() || useCase.productLink
+    const logoAsset = batchForm.logoAsset.trim()
+    const productAsset = batchForm.productAsset.trim()
+    const additionalNotes = batchForm.additionalNotes.trim()
 
-    const creativeIds = Array.from({ length: 3 }, (_, index) => `creative-${timestamp}-${index + 1}`)
+    const creativeIds = Array.from(
+      { length: 3 },
+      (_, index) => `creative-${timestamp}-${index + 1}`,
+    )
+
     const batch: CreativeBatch = {
       id: batchId,
       useCaseId: useCase.id,
       benefitIds: batchForm.benefitIds,
-      proofIds: batchForm.proofIds,
-      templateId: template.id,
       angleId,
       promptVersion,
+      productLink,
+      logoAsset,
+      productAsset,
+      additionalNotes,
       createdAt: timestamp,
       creativeIds,
     }
 
     const creatives: CreativeAsset[] = creativeIds.map((id, index) => {
       const leadBenefit = benefits[index % benefits.length]
-      const proofLine = proofs[index % Math.max(proofs.length, 1)]?.title ?? '可搭配 CRM 接續推進'
+      const supportBenefit = benefits[(index + 1) % benefits.length]
+      const seed = stringScore(`${angleId}-${id}`)
+      const copyMode = copyModes[seed % copyModes.length]
+      const emotionalIntensity = (seed % 5) + 1
+      const visualMode = colorModes[(seed + index) % colorModes.length]
+      const modelSetting = modelSettings[(seed + benefits.length) % modelSettings.length]
 
       return {
         id,
         batchId,
         angleId,
         creativeVersion: `A${index + 1}`,
-        headline: `${useCase.title}，現在可以連成效一起看`,
-        kicker: `${leadBenefit.title} / ${template.title}`,
-        body: `${useCase.summary} 主軸下，用 ${leadBenefit.summary} 去說服電商品牌把簡訊從單次發送，升級成可優化的 growth loop。`,
-        proofLine,
-        visualMode: colorModes[index % colorModes.length],
+        headline:
+          copyMode === '品牌'
+            ? `${useCase.title}，把 SMS 變成可回溯的成長節奏`
+            : `${useCase.title}，把每次簡訊更推近轉單一步`,
+        kicker: `${copyMode}文案 / ${visualMode}`,
+        body: `creative.bktsai.link 已收到 ${useCase.title}、${leadBenefit.title}、${supportBenefit.title}、產品連結與補充內容，先回傳這張 1:1 給你審核。`,
+        proofLine: `風格隨機 · ${copyMode}導向 · 感性/理性強度 ${emotionalIntensity}/5`,
+        visualMode,
+        squareAsset: `${slugify(useCase.title)}-${index + 1}-1x1.png`,
+        formatStatus: 'square_only',
+        selectedPlatforms: [],
+        copyMode,
+        emotionalIntensity,
+        modelSetting,
         metadata: {
           icp: '電商品牌',
           useCaseId: useCase.id,
           benefitIds: batchForm.benefitIds,
-          proofIds: batchForm.proofIds,
-          templateId: template.id,
+          productLink,
+          logoAsset,
+          productAsset,
+          additionalNotes,
           createdAt: timestamp,
         },
         promptVersion,
@@ -244,16 +309,57 @@ function App() {
     }))
   }
 
-  const updateCreativeReview = (
-    creativeId: string,
-    reviewStatus: CreativeAsset['reviewStatus'],
-    rejectionReason: string | null,
-  ) => {
+  const rejectCreative = (creativeId: string, reason: string) => {
     setState((current) => ({
       ...current,
       creatives: current.creatives.map((creative) =>
         creative.id === creativeId
-          ? { ...creative, reviewStatus, rejectionReason }
+          ? {
+              ...creative,
+              reviewStatus: 'rejected',
+              rejectionReason: reason,
+              formatStatus: 'square_only',
+            }
+          : creative,
+      ),
+    }))
+  }
+
+  const toggleCreativePlatform = (creativeId: string, platform: Platform) => {
+    setState((current) => ({
+      ...current,
+      creatives: current.creatives.map((creative) => {
+        if (creative.id !== creativeId) {
+          return creative
+        }
+
+        const selectedPlatforms = creative.selectedPlatforms.includes(platform)
+          ? creative.selectedPlatforms.filter((item) => item !== platform)
+          : [...creative.selectedPlatforms, platform]
+
+        return {
+          ...creative,
+          selectedPlatforms,
+          formatStatus:
+            creative.reviewStatus === 'approved' && selectedPlatforms.length > 0
+              ? 'formats_ready'
+              : 'square_only',
+        }
+      }),
+    }))
+  }
+
+  const approveCreative = (creativeId: string) => {
+    setState((current) => ({
+      ...current,
+      creatives: current.creatives.map((creative) =>
+        creative.id === creativeId && creative.selectedPlatforms.length > 0
+          ? {
+              ...creative,
+              reviewStatus: 'approved',
+              rejectionReason: null,
+              formatStatus: 'formats_ready',
+            }
           : creative,
       ),
     }))
@@ -272,15 +378,15 @@ function App() {
       batchId: creative.batchId,
       status: 'draft',
       campaignName: `lihiSMS | 電商品牌 | ${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? '未命名'}`,
-      adsetName: `${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? 'Use Case'} / ${lookupRecord(state.library, creative.metadata.benefitIds[0])?.title ?? 'Benefit'}`,
+      adsetName: `${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? 'Use Case'} / ${creative.selectedPlatforms.join(', ')}`,
       adName: `${creative.angleId} / ${creative.creativeVersion}`,
       metadata: {
         icp: creative.metadata.icp,
         useCaseId: creative.metadata.useCaseId,
         benefitIds: creative.metadata.benefitIds,
-        proofIds: creative.metadata.proofIds,
         angleId: creative.angleId,
         creativeVersion: creative.creativeVersion,
+        selectedPlatforms: creative.selectedPlatforms,
         createdAt,
       },
       createdAt,
@@ -317,7 +423,9 @@ function App() {
         lookupRecord(state.library, draft.metadata.useCaseId)?.title ?? '會員喚回'
       const benefitTitle =
         lookupRecord(state.library, draft.metadata.benefitIds[0])?.title ?? '可追蹤點擊'
-      const seed = stringScore(`${draft.id}${useCaseTitle}${benefitTitle}`)
+      const seed = stringScore(
+        `${draft.id}${useCaseTitle}${benefitTitle}${draft.metadata.selectedPlatforms.join('')}`,
+      )
       const impressions = 2200 + (seed % 4200)
       const frequency = 1.2 + ((seed % 33) / 10)
       const ctr = 0.9 + ((seed % 30) / 10)
@@ -366,6 +474,8 @@ function App() {
   const resetDemo = () => {
     setState(initialState)
     setEditingId(null)
+    setForm(buildEmptyForm())
+    setBatchForm(buildBatchForm(initialState.library))
   }
 
   return (
@@ -380,7 +490,11 @@ function App() {
           <div>
             <p className="eyebrow">lihiSMS growth operating console</p>
             <h1>把素材、draft、數據、建議，收進同一條可回溯的成長流水線。</h1>
-            <p className="hero-note">Demo dashboard now normalizes all spend and CPA inputs in USD.</p>
+            <p className="hero-note">
+              系統先把 use case、benefits、產品連結與補充內容送進
+              {' '}
+              creative.bktsai.link，先回 1:1 審稿，再由你選平台與核准延伸版位。
+            </p>
           </div>
           <div className="hero-metrics">
             <article>
@@ -393,7 +507,7 @@ function App() {
             </article>
             <article>
               <span>Control mode</span>
-              <strong>系統只建議，你才執行</strong>
+              <strong>先審稿，再補齊版位與 draft</strong>
             </article>
           </div>
         </div>
@@ -404,10 +518,10 @@ function App() {
             <h2>第一版邊界</h2>
           </div>
           <ul>
-            <li>每次只測 1 個 use case，搭配 1 到 2 個 benefits。</li>
-            <li>每輪只產 3 張圖，走同一個 angle 的變體。</li>
-            <li>素材先人工審核，再自動建 Facebook draft。</li>
-            <li>Airbyte 只拉必要欄位，先不做全量 data warehouse。</li>
+            <li>每次送 1 個 use case，搭配 3 到 5 個 benefits。</li>
+            <li>必帶產品或服務連結，logo 必填，產品圖可選填。</li>
+            <li>creative.bktsai.link 先回傳文案與 1:1，審核通過再補其他尺寸。</li>
+            <li>選好平台後按 Approved，最後再 Build drafts from approved creatives。</li>
           </ul>
         </section>
       </header>
@@ -467,6 +581,13 @@ function App() {
                           </span>
                         ))}
                       </div>
+                      {record.productLink || record.logoAsset || record.productAsset ? (
+                        <div className="library-meta-strip">
+                          {record.productLink ? <span>Link: {record.productLink}</span> : null}
+                          {record.logoAsset ? <span>Logo: {record.logoAsset}</span> : null}
+                          {record.productAsset ? <span>Product: {record.productAsset}</span> : null}
+                        </div>
+                      ) : null}
                       <div className="library-card-actions">
                         <button type="button" className="mini-button" onClick={() => handleEditRecord(record)}>
                           Edit
@@ -528,6 +649,47 @@ function App() {
                   }
                 />
               </label>
+              <label>
+                Product / service link
+                <input
+                  placeholder="https://..."
+                  value={form.productLink}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      productLink: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <div className="asset-grid">
+                <label>
+                  Logo upload area
+                  <input
+                    placeholder="logo file name or CDN URL"
+                    value={form.logoAsset}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        logoAsset: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Product image upload area
+                  <input
+                    placeholder="product asset file name or CDN URL"
+                    value={form.productAsset}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        productAsset: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
               <div>
                 <span className="field-label">Standard tags</span>
                 <div className="checkbox-grid">
@@ -586,7 +748,14 @@ function App() {
               <p className="eyebrow">02 / Creative batch</p>
               <h2>素材批次生成</h2>
             </div>
-            <span className="pill active">creative.bktsa.link demo mode</span>
+            <span className="pill active">creative.bktsai.link demo mode</span>
+          </div>
+
+          <div className="builder-flow">
+            <span>Send use case + benefits + product link + extra notes</span>
+            <span>Random style / copy mode / emotion 1-5</span>
+            <span>Return copy + 1:1 creative first</span>
+            <span>Approved 後補齊其他格式並進 draft builder</span>
           </div>
 
           <div className="builder-grid">
@@ -594,12 +763,7 @@ function App() {
               Use case
               <select
                 value={batchForm.useCaseId}
-                onChange={(event) =>
-                  setBatchForm((current) => ({
-                    ...current,
-                    useCaseId: event.target.value,
-                  }))
-                }
+                onChange={(event) => handleUseCaseChange(event.target.value)}
               >
                 {activeLibrary
                   .filter((record) => record.kind === 'use_case')
@@ -612,7 +776,7 @@ function App() {
             </label>
 
             <div>
-              <span className="field-label">Benefits (1-2)</span>
+              <span className="field-label">Benefits (3-5)</span>
               <div className="checkbox-grid">
                 {activeLibrary
                   .filter((record) => record.kind === 'benefit')
@@ -624,7 +788,7 @@ function App() {
                         onChange={(event) =>
                           setBatchForm((current) => {
                             const next = event.target.checked
-                              ? [...current.benefitIds, record.id].slice(0, 2)
+                              ? [...current.benefitIds, record.id].slice(0, 5)
                               : current.benefitIds.filter((id) => id !== record.id)
                             return { ...current, benefitIds: next }
                           })
@@ -634,63 +798,88 @@ function App() {
                     </label>
                   ))}
               </div>
-            </div>
-
-            <div>
-              <span className="field-label">Proof tags</span>
-              <div className="checkbox-grid">
-                {activeLibrary
-                  .filter((record) => record.kind === 'proof')
-                  .map((record) => (
-                    <label key={record.id} className="check-chip">
-                      <input
-                        type="checkbox"
-                        checked={batchForm.proofIds.includes(record.id)}
-                        onChange={(event) =>
-                          setBatchForm((current) => ({
-                            ...current,
-                            proofIds: event.target.checked
-                              ? [...current.proofIds, record.id]
-                              : current.proofIds.filter((id) => id !== record.id),
-                          }))
-                        }
-                      />
-                      <span>{record.title}</span>
-                    </label>
-                  ))}
-              </div>
+              <p className="helper-copy">最少選 3 個，最多 5 個 benefits。</p>
             </div>
 
             <label>
-              Prompt template
-              <select
-                value={batchForm.templateId}
+              Product / service link
+              <input
+                placeholder="https://..."
+                value={batchForm.productLink}
                 onChange={(event) =>
                   setBatchForm((current) => ({
                     ...current,
-                    templateId: event.target.value,
+                    productLink: event.target.value,
                   }))
                 }
-              >
-                {activeLibrary
-                  .filter((record) => record.kind === 'template')
-                  .map((record) => (
-                    <option key={record.id} value={record.id}>
-                      {record.title}
+              />
+            </label>
+
+            <div className="asset-grid">
+              <label>
+                Logo required
+                <select
+                  value={batchForm.logoAsset}
+                  onChange={(event) =>
+                    setBatchForm((current) => ({
+                      ...current,
+                      logoAsset: event.target.value,
+                    }))
+                  }
+                >
+                  {availableLogoAssets.map((asset) => (
+                    <option key={asset} value={asset}>
+                      {asset}
                     </option>
                   ))}
-              </select>
+                </select>
+              </label>
+              <label>
+                Product image optional
+                <select
+                  value={batchForm.productAsset}
+                  onChange={(event) =>
+                    setBatchForm((current) => ({
+                      ...current,
+                      productAsset: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">No product image</option>
+                  {availableProductAssets.map((asset) => (
+                    <option key={asset} value={asset}>
+                      {asset}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label>
+              其他想補充內容
+              <textarea
+                rows={4}
+                placeholder="例如想強調轉單、避免太硬銷、或指定某些產品賣點"
+                value={batchForm.additionalNotes}
+                onChange={(event) =>
+                  setBatchForm((current) => ({
+                    ...current,
+                    additionalNotes: event.target.value,
+                  }))
+                }
+              />
             </label>
           </div>
 
           <button className="primary-button" type="button" onClick={handleGenerateBatch}>
-            Generate 3-image batch
+            Generate Ads
           </button>
 
           {latestBatch ? (
             <div className="metadata-strip">
               <span>angle_id: {latestBatch.angleId}</span>
               <span>prompt_version: {latestBatch.promptVersion}</span>
+              <span>route: creative.bktsai.link</span>
               <span>created_at: {formatDate(latestBatch.createdAt)}</span>
             </div>
           ) : null}
@@ -699,10 +888,10 @@ function App() {
         <section className="panel span-two">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">03 / Review board</p>
-              <h2>人工審核與淘汰原因</h2>
+              <p className="eyebrow">03 / Review + platform approval</p>
+              <h2>人工審核、平台選擇、回傳剩餘版型</h2>
             </div>
-            <span className="pill muted">Tony keeps final approval power</span>
+            <span className="pill muted">先選平台，再按 Approved</span>
           </div>
 
           <div className="creative-grid">
@@ -722,15 +911,49 @@ function App() {
                   <div className="tag-row">
                     <span className="tag">{creative.metadata.icp}</span>
                     <span className="tag">{creative.promptVersion}</span>
+                    <span className="tag subtle">1:1 {creative.squareAsset}</span>
+                  </div>
+                  <div className="creative-return">
+                    <span>Copy mode: {creative.copyMode}</span>
+                    <span>Emotion: {creative.emotionalIntensity}/5</span>
+                    <span>Model: {creative.modelSetting}</span>
+                    <span>Logo: {creative.metadata.logoAsset}</span>
+                    <span>
+                      Product: {creative.metadata.productAsset || 'none'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="field-label">Platforms</span>
+                    <div className="platform-grid">
+                      {platformOptions.map((platform) => (
+                        <button
+                          key={platform}
+                          type="button"
+                          className={
+                            creative.selectedPlatforms.includes(platform)
+                              ? 'reason-chip active'
+                              : 'reason-chip'
+                          }
+                          onClick={() => toggleCreativePlatform(creative.id, platform)}
+                        >
+                          {platform}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="review-actions">
                     <button
                       type="button"
                       className={creative.reviewStatus === 'approved' ? 'mini-button success' : 'mini-button'}
-                      onClick={() => updateCreativeReview(creative.id, 'approved', null)}
+                      onClick={() => approveCreative(creative.id)}
                     >
-                      Approve
+                      Approved
                     </button>
+                    <p className="helper-copy">
+                      {creative.selectedPlatforms.length > 0
+                        ? `已選平台：${creative.selectedPlatforms.join(', ')}`
+                        : '先選至少 1 個平台，系統才會補齊其他版位。'}
+                    </p>
                     <div className="reason-wrap">
                       {rejectionReasons.map((reason) => (
                         <button
@@ -742,7 +965,7 @@ function App() {
                               ? 'reason-chip active'
                               : 'reason-chip'
                           }
-                          onClick={() => updateCreativeReview(creative.id, 'rejected', reason)}
+                          onClick={() => rejectCreative(creative.id, reason)}
                         >
                           {reason}
                         </button>
@@ -758,7 +981,7 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">04 / Facebook drafts</p>
+              <p className="eyebrow">04 / Draft builder</p>
               <h2>Draft ad studio</h2>
             </div>
             <button className="primary-button" type="button" onClick={createDraftAds}>
@@ -767,7 +990,7 @@ function App() {
           </div>
 
           <p className="helper-copy">
-            Ready for draft: {approvedReadyForDraft.length} approved creatives
+            Ready for draft: {approvedReadyForDraft.length} approved creatives with platforms selected
           </p>
 
           <div className="draft-list">
@@ -781,13 +1004,18 @@ function App() {
                 </div>
                 <div className="draft-actions">
                   <span className="pill active">{draft.metadata.angleId}</span>
+                  {draft.metadata.selectedPlatforms.map((platform) => (
+                    <span key={platform} className="pill muted">
+                      {platform}
+                    </span>
+                  ))}
                   {draft.status === 'draft' ? (
                     <button
                       type="button"
                       className="mini-button"
                       onClick={() => publishDraft(draft.id)}
                     >
-                      Publish manually
+                      Mark draft published
                     </button>
                   ) : (
                     <span className="helper-copy">
@@ -904,7 +1132,7 @@ function App() {
             {recommendations.length === 0 ? (
               <article className="recommendation-card neutral">
                 <h3>還沒有建議</h3>
-                <p>先發佈 draft，再跑一次 demo Airbyte sync，系統才有資料能判斷。</p>
+                <p>先把 approved creative 建成 draft、標記 published，再跑一次 demo Airbyte sync。</p>
               </article>
             ) : (
               recommendations.map((recommendation) => (

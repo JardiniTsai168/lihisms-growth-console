@@ -4,6 +4,8 @@ export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
 export type DraftStatus = 'draft' | 'published'
 
+export type Platform = 'Facebook' | 'Instagram' | 'Google Display' | 'LINE'
+
 export type StrategyRecord = {
   id: string
   kind: LibraryKind
@@ -13,6 +15,9 @@ export type StrategyRecord = {
   freeformTags: string[]
   status: 'active' | 'archived'
   notes: string
+  productLink: string
+  logoAsset: string
+  productAsset: string
   createdAt: string
   updatedAt: string
 }
@@ -27,12 +32,20 @@ export type CreativeAsset = {
   body: string
   proofLine: string
   visualMode: string
+  squareAsset: string
+  formatStatus: 'square_only' | 'formats_ready'
+  selectedPlatforms: Platform[]
+  copyMode: '品牌' | '轉單'
+  emotionalIntensity: number
+  modelSetting: string
   metadata: {
     icp: string
     useCaseId: string
     benefitIds: string[]
-    proofIds: string[]
-    templateId: string
+    productLink: string
+    logoAsset: string
+    productAsset: string
+    additionalNotes: string
     createdAt: string
   }
   promptVersion: string
@@ -44,10 +57,12 @@ export type CreativeBatch = {
   id: string
   useCaseId: string
   benefitIds: string[]
-  proofIds: string[]
-  templateId: string
   angleId: string
   promptVersion: string
+  productLink: string
+  logoAsset: string
+  productAsset: string
+  additionalNotes: string
   createdAt: string
   creativeIds: string[]
 }
@@ -64,9 +79,9 @@ export type DraftAd = {
     icp: string
     useCaseId: string
     benefitIds: string[]
-    proofIds: string[]
     angleId: string
     creativeVersion: string
+    selectedPlatforms: Platform[]
     createdAt: string
   }
   createdAt: string

@@ -244,7 +244,11 @@
 .library-card-actions,
 .draft-actions,
 .metadata-strip,
-.reason-wrap {
+.reason-wrap,
+.builder-flow,
+.platform-grid,
+.library-meta-strip,
+.creative-return {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -278,9 +282,14 @@
 .creative-meta,
 .rule-field,
 .builder-grid,
-.analytics-numbers {
+.analytics-numbers,
+.asset-grid {
   display: grid;
   gap: 14px;
+}
+
+.asset-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .editor-card {
@@ -340,6 +349,21 @@ textarea {
   margin-top: 16px;
   font-size: 0.82rem;
   color: rgba(26, 26, 94, 0.7);
+}
+
+.builder-flow {
+  margin-bottom: 16px;
+}
+
+.builder-flow span,
+.library-meta-strip span,
+.creative-return span {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  color: rgba(26, 26, 94, 0.76);
+  font-size: 0.8rem;
 }
 
 .creative-grid {
@@ -425,6 +449,10 @@ textarea {
   padding: 0 4px;
 }
 
+.creative-return {
+  gap: 8px;
+}
+
 .review-actions {
   display: grid;
   gap: 10px;
@@ -481,11 +509,11 @@ textarea {
 }
 
 .hero-panel h1 {
-  font-size: clamp(1.42rem, 2.2vw, 1.92rem);
+  font-size: clamp(1.02rem, 1.65vw, 1.72rem);
   line-height: 1.04;
   letter-spacing: -0.05em;
-  max-width: 26ch;
-  text-wrap: balance;
+  max-width: none;
+  white-space: nowrap;
 }
 
 .recommendation-grid {
@@ -538,7 +566,8 @@ textarea {
   }
 
   .creative-grid,
-  .recommendation-grid {
+  .recommendation-grid,
+  .asset-grid {
     grid-template-columns: 1fr;
   }
 
@@ -585,7 +614,13 @@ textarea {
   }
 
   .funnel-row,
-  .rules-grid {
+  .rules-grid,
+  .asset-grid {
     grid-template-columns: 1fr;
+  }
+
+  .hero-panel h1 {
+    white-space: nowrap;
+    font-size: clamp(0.84rem, 2.8vw, 1.04rem);
   }
 }
