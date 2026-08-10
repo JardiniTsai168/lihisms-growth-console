@@ -517,6 +517,16 @@ textarea {
   line-height: 1.6;
 }
 
+.error-banner {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(194, 59, 45, 0.1);
+  border: 1px solid rgba(194, 59, 45, 0.24);
+  color: rgba(133, 27, 16, 0.96);
+  font-weight: 700;
+}
+
 .funnel-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

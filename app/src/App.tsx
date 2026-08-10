@@ -15,7 +15,7 @@ import type {
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
-const STORAGE_KEY = 'lihisms-growth-console-v4'
+const STORAGE_KEY = 'lihisms-growth-console-v5'
 const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
 
 type ReviewResponse = {
@@ -961,7 +961,7 @@ function App() {
             {isGeneratingBatch ? 'Generating…' : 'Generate Ads'}
           </button>
 
-          {requestError ? <p className="helper-copy">{requestError}</p> : null}
+          {requestError ? <p className="helper-copy error-banner">{requestError}</p> : null}
 
           {latestBatch ? (
             <div className="metadata-strip">
