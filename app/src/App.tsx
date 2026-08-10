@@ -43,7 +43,6 @@ const buildEmptyForm = () => ({
   title: '',
   summary: '',
   notes: '',
-  productLink: '',
   logoAsset: '',
   productAsset: '',
   standardTags: [] as string[],
@@ -148,7 +147,8 @@ function App() {
       title: form.title.trim(),
       summary: form.summary.trim(),
       notes: form.notes.trim(),
-      productLink: form.productLink.trim(),
+      productLink:
+        state.library.find((record) => record.id === editingId)?.productLink ?? '',
       logoAsset: form.logoAsset.trim(),
       productAsset: form.productAsset.trim(),
       standardTags: form.standardTags,
@@ -182,7 +182,6 @@ function App() {
       title: record.title,
       summary: record.summary,
       notes: record.notes,
-      productLink: record.productLink,
       logoAsset: record.logoAsset,
       productAsset: record.productAsset,
       standardTags: record.standardTags,
@@ -583,7 +582,6 @@ function App() {
                       </div>
                       {record.productLink || record.logoAsset || record.productAsset ? (
                         <div className="library-meta-strip">
-                          {record.productLink ? <span>Link: {record.productLink}</span> : null}
                           {record.logoAsset ? <span>Logo: {record.logoAsset}</span> : null}
                           {record.productAsset ? <span>Product: {record.productAsset}</span> : null}
                         </div>
@@ -645,19 +643,6 @@ function App() {
                     setForm((current) => ({
                       ...current,
                       summary: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Product / service link
-                <input
-                  placeholder="https://..."
-                  value={form.productLink}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      productLink: event.target.value,
                     }))
                   }
                 />
