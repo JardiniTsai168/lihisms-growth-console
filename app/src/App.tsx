@@ -15,7 +15,7 @@ import type {
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
-const STORAGE_KEY = 'lihisms-growth-console-v2'
+const STORAGE_KEY = 'lihisms-growth-console-v3'
 
 const rejectionReasons = [
   '賣點不對',
