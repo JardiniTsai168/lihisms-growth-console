@@ -983,89 +983,103 @@ function App() {
           </div>
 
           <div className="creative-grid">
-            {batchCreatives.map((creative) => (
-              <article key={creative.id} className={`creative-card mode-${slugify(creative.visualMode)}`}>
-                <div className="creative-poster">
-                  <p className="poster-kicker">{creative.kicker}</p>
-                  <h3>{creative.headline}</h3>
-                  <p>{creative.body}</p>
-                  <strong>{creative.deliveryNote}</strong>
-                  <footer>
-                    <span>{creative.angleId}</span>
-                    <span>{creative.creativeVersion}</span>
-                  </footer>
-                </div>
-                <div className="creative-meta">
-                  <div className="tag-row">
-                    <span className="tag">{creative.metadata.icp}</span>
-                    <span className="tag">{creative.promptVersion}</span>
-                    <span className="tag subtle">1:1 {assetLabelFromUrl(creative.squareAsset)}</span>
-                  </div>
-                  <div className="creative-return">
-                    <span>Product: {creative.metadata.productName}</span>
-                    <span>Copy mode: {creative.copyMode}</span>
-                    <span>Emotion: {creative.emotionalIntensity}/5</span>
-                    <span>Model: {creative.modelSetting}</span>
-                    <span>Logo: {creative.metadata.logoAsset}</span>
-                    <span>Product: {creative.metadata.productAsset || 'none'}</span>
-                    <span>
-                      Deliverables: {creative.assetDeliverables.length > 0 ? creative.assetDeliverables.length : 'pending'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="field-label">Platforms</span>
-                    <div className="platform-grid">
-                      {platformOptions.map((platform) => (
-                        <button
-                          key={platform}
-                          type="button"
-                          className={
-                            creative.selectedPlatforms.includes(platform)
-                              ? 'reason-chip active'
-                              : 'reason-chip'
-                          }
-                          onClick={() => toggleCreativePlatform(creative.id, platform)}
-                        >
-                          {platform}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="review-actions">
-                    <button
-                      type="button"
-                      className={creative.reviewStatus === 'approved' ? 'mini-button success' : 'mini-button'}
-                      disabled={approvingCreativeId === creative.id}
-                      onClick={() => approveCreative(creative.id)}
-                    >
-                      {approvingCreativeId === creative.id ? 'Approving…' : 'Approved'}
-                    </button>
-                    <p className="helper-copy">
-                      {creative.selectedPlatforms.length > 0
-                        ? `已選平台：${creative.selectedPlatforms.join(', ')}，Approved 後會回傳這些平台需要的正確尺寸。`
-                        : '先選至少 1 個平台，系統才會向 creative.bktsai.link 取回正確尺寸。'}
-                    </p>
-                    <div className="reason-wrap">
-                      {rejectionReasons.map((reason) => (
-                        <button
-                          key={reason}
-                          type="button"
-                          className={
-                            creative.reviewStatus === 'rejected' &&
-                            creative.rejectionReason === reason
-                              ? 'reason-chip active'
-                              : 'reason-chip'
-                          }
-                          onClick={() => rejectCreative(creative.id, reason)}
-                        >
-                          {reason}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+            {batchCreatives.length === 0 ? (
+              <article className="creative-empty-state">
+                <h3>還沒有回傳素材</h3>
+                <p>上傳 logo 後按 `Generate Ads`，這裡才會出現 creative.bktsai.link 回來的 1:1 素材與文案。</p>
               </article>
-            ))}
+            ) : (
+              batchCreatives.map((creative) => (
+                <article key={creative.id} className={`creative-card mode-${slugify(creative.visualMode)}`}>
+                  <div className="creative-preview-frame">
+                    <img
+                      className="creative-preview-image"
+                      src={creative.squareAsset}
+                      alt={`${creative.metadata.productName} ${creative.creativeVersion}`}
+                    />
+                  </div>
+                  <div className="creative-poster">
+                    <p className="poster-kicker">{creative.kicker}</p>
+                    <h3>{creative.headline}</h3>
+                    <p>{creative.body}</p>
+                    <strong>{creative.deliveryNote}</strong>
+                    <footer>
+                      <span>{creative.angleId}</span>
+                      <span>{creative.creativeVersion}</span>
+                    </footer>
+                  </div>
+                  <div className="creative-meta">
+                    <div className="tag-row">
+                      <span className="tag">{creative.metadata.icp}</span>
+                      <span className="tag">{creative.promptVersion}</span>
+                      <span className="tag subtle">1:1 {assetLabelFromUrl(creative.squareAsset)}</span>
+                    </div>
+                    <div className="creative-return">
+                      <span>Product: {creative.metadata.productName}</span>
+                      <span>Copy mode: {creative.copyMode}</span>
+                      <span>Emotion: {creative.emotionalIntensity}/5</span>
+                      <span>Model: {creative.modelSetting}</span>
+                      <span>Logo: {creative.metadata.logoAsset}</span>
+                      <span>Product: {creative.metadata.productAsset || 'none'}</span>
+                      <span>
+                        Deliverables: {creative.assetDeliverables.length > 0 ? creative.assetDeliverables.length : 'pending'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="field-label">Platforms</span>
+                      <div className="platform-grid">
+                        {platformOptions.map((platform) => (
+                          <button
+                            key={platform}
+                            type="button"
+                            className={
+                              creative.selectedPlatforms.includes(platform)
+                                ? 'reason-chip active'
+                                : 'reason-chip'
+                            }
+                            onClick={() => toggleCreativePlatform(creative.id, platform)}
+                          >
+                            {platform}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="review-actions">
+                      <button
+                        type="button"
+                        className={creative.reviewStatus === 'approved' ? 'mini-button success' : 'mini-button'}
+                        disabled={approvingCreativeId === creative.id}
+                        onClick={() => approveCreative(creative.id)}
+                      >
+                        {approvingCreativeId === creative.id ? 'Approving…' : 'Approved'}
+                      </button>
+                      <p className="helper-copy">
+                        {creative.selectedPlatforms.length > 0
+                          ? `已選平台：${creative.selectedPlatforms.join(', ')}，Approved 後會回傳這些平台需要的正確尺寸。`
+                          : '先選至少 1 個平台，系統才會向 creative.bktsai.link 取回正確尺寸。'}
+                      </p>
+                      <div className="reason-wrap">
+                        {rejectionReasons.map((reason) => (
+                          <button
+                            key={reason}
+                            type="button"
+                            className={
+                              creative.reviewStatus === 'rejected' &&
+                              creative.rejectionReason === reason
+                                ? 'reason-chip active'
+                                : 'reason-chip'
+                            }
+                            onClick={() => rejectCreative(creative.id, reason)}
+                          >
+                            {reason}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
           </div>
         </section>
 
