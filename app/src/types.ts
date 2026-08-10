@@ -15,8 +15,6 @@ export type StrategyRecord = {
   freeformTags: string[]
   status: 'active' | 'archived'
   notes: string
-  logoAsset: string
-  productAsset: string
   createdAt: string
   updatedAt: string
 }

@@ -43,8 +43,6 @@ const buildEmptyForm = () => ({
   title: '',
   summary: '',
   notes: '',
-  logoAsset: '',
-  productAsset: '',
   standardTags: [] as string[],
   freeformTags: '',
 })
@@ -57,8 +55,8 @@ const buildBatchForm = (library: StrategyRecord[]) => {
     useCaseId: useCase?.id ?? '',
     benefitIds: benefits.slice(0, 3).map((item) => item.id),
     productLink: '',
-    logoAsset: useCase?.logoAsset ?? 'lihi-logo-primary.png',
-    productAsset: useCase?.productAsset ?? '',
+    logoAsset: 'lihi-logo-primary.png',
+    productAsset: '',
     additionalNotes: '',
   }
 }
@@ -73,23 +71,6 @@ function App() {
 
   const activeLibrary = state.library.filter((record) => record.status === 'active')
   const latestBatch = state.batches[0]
-
-  const availableLogoAssets = Array.from(
-    new Set(
-      activeLibrary
-        .map((record) => record.logoAsset.trim())
-        .filter(Boolean)
-        .concat('lihi-logo-primary.png'),
-    ),
-  )
-
-  const availableProductAssets = Array.from(
-    new Set(
-      activeLibrary
-        .map((record) => record.productAsset.trim())
-        .filter(Boolean),
-    ),
-  )
 
   const batchCreatives = useMemo(() => {
     if (!latestBatch) {
@@ -147,8 +128,6 @@ function App() {
       title: form.title.trim(),
       summary: form.summary.trim(),
       notes: form.notes.trim(),
-      logoAsset: form.logoAsset.trim(),
-      productAsset: form.productAsset.trim(),
       standardTags: form.standardTags,
       freeformTags: form.freeformTags
         .split(',')
@@ -180,8 +159,6 @@ function App() {
       title: record.title,
       summary: record.summary,
       notes: record.notes,
-      logoAsset: record.logoAsset,
-      productAsset: record.productAsset,
       standardTags: record.standardTags,
       freeformTags: record.freeformTags.join(', '),
     })
@@ -197,12 +174,9 @@ function App() {
   }
 
   const handleUseCaseChange = (useCaseId: string) => {
-    const useCase = activeLibrary.find((record) => record.id === useCaseId)
     setBatchForm((current) => ({
       ...current,
       useCaseId,
-      logoAsset: useCase?.logoAsset ?? current.logoAsset,
-      productAsset: useCase?.productAsset ?? current.productAsset,
     }))
   }
 
@@ -577,12 +551,6 @@ function App() {
                           </span>
                         ))}
                       </div>
-                      {record.logoAsset || record.productAsset ? (
-                        <div className="library-meta-strip">
-                          {record.logoAsset ? <span>Logo: {record.logoAsset}</span> : null}
-                          {record.productAsset ? <span>Product: {record.productAsset}</span> : null}
-                        </div>
-                      ) : null}
                       <div className="library-card-actions">
                         <button type="button" className="mini-button" onClick={() => handleEditRecord(record)}>
                           Edit
@@ -642,34 +610,6 @@ function App() {
                   }
                 />
               </label>
-              <div className="asset-grid">
-                <label>
-                  Logo upload area
-                  <input
-                    placeholder="logo file name or CDN URL"
-                    value={form.logoAsset}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        logoAsset: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Product image upload area
-                  <input
-                    placeholder="product asset file name or CDN URL"
-                    value={form.productAsset}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        productAsset: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-              </div>
               <div>
                 <span className="field-label">Standard tags</span>
                 <div className="checkbox-grid">
@@ -798,7 +738,8 @@ function App() {
             <div className="asset-grid">
               <label>
                 Logo required
-                <select
+                <input
+                  placeholder="logo file name or CDN URL"
                   value={batchForm.logoAsset}
                   onChange={(event) =>
                     setBatchForm((current) => ({
@@ -806,17 +747,12 @@ function App() {
                       logoAsset: event.target.value,
                     }))
                   }
-                >
-                  {availableLogoAssets.map((asset) => (
-                    <option key={asset} value={asset}>
-                      {asset}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               <label>
                 Product image optional
-                <select
+                <input
+                  placeholder="product asset file name or CDN URL"
                   value={batchForm.productAsset}
                   onChange={(event) =>
                     setBatchForm((current) => ({
@@ -824,14 +760,7 @@ function App() {
                       productAsset: event.target.value,
                     }))
                   }
-                >
-                  <option value="">No product image</option>
-                  {availableProductAssets.map((asset) => (
-                    <option key={asset} value={asset}>
-                      {asset}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
             </div>
 

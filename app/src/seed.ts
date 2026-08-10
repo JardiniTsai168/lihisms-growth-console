@@ -16,7 +16,6 @@ const record = (
   summary: string,
   standardTags: string[],
   notes = '',
-  options?: Partial<Pick<StrategyRecord, 'logoAsset' | 'productAsset'>>,
 ): StrategyRecord => ({
   id,
   kind,
@@ -26,8 +25,6 @@ const record = (
   freeformTags: [],
   status: 'active',
   notes,
-  logoAsset: options?.logoAsset ?? '',
-  productAsset: options?.productAsset ?? '',
   createdAt: now,
   updatedAt: now,
 })
@@ -51,11 +48,6 @@ const library: StrategyRecord[] = [
     '會員喚回',
     '針對已購買但沉默一段時間的會員，用 SMS 把流失注意力拉回品牌檔期。',
     ['會員喚回', '沉睡顧客喚醒'],
-    '',
-    {
-      logoAsset: 'lihi-logo-primary.png',
-      productAsset: 'sms-dashboard-packshot.png',
-    },
   ),
   record(
     'use-launch-day',
@@ -63,11 +55,6 @@ const library: StrategyRecord[] = [
     '新品上架',
     '新品開賣當天快速通知既有會員，讓簡訊和站內檔期在同一節奏引爆。',
     ['新品上架'],
-    '',
-    {
-      logoAsset: 'lihi-logo-primary.png',
-      productAsset: 'new-launch-phone-mockup.png',
-    },
   ),
   record(
     'use-flash-sale',
@@ -75,11 +62,6 @@ const library: StrategyRecord[] = [
     '限時促購',
     '為短時效的折扣活動建立高壓縮、強 CTA 的提醒節奏。',
     ['限時促購'],
-    '',
-    {
-      logoAsset: 'lihi-logo-primary.png',
-      productAsset: 'flash-sale-banner-pack.png',
-    },
   ),
   record(
     'benefit-trackable',
