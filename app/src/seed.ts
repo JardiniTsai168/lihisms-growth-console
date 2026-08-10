@@ -37,11 +37,10 @@ export const standardTagBank: Record<StrategyRecord['kind'], string[]> = {
 }
 
 export const defaultRules: OptimizationRules = {
-  minSpend: 1200,
-  minImpressions: 1800,
-  ctrDropPercent: 30,
-  cpaLiftPercent: 50,
-  winnerTargetCpa: 280,
+  minSpend: 40,
+  ctrGoal: 1.8,
+  maxCpa: 16,
+  maxFrequency: 2.8,
 }
 
 const library: StrategyRecord[] = [

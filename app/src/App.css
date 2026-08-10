@@ -41,6 +41,12 @@
   gap: 22px;
 }
 
+.hero-note {
+  margin-top: 16px;
+  max-width: 44ch;
+  color: var(--muted-strong);
+}
+
 .brand-mark {
   width: 124px;
   height: auto;
@@ -205,8 +211,14 @@
 
 .library-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 420px);
   gap: 20px;
+  align-items: start;
+}
+
+.library-stack {
+  display: grid;
+  gap: 14px;
 }
 
 .library-filters,
@@ -225,6 +237,9 @@
   display: grid;
   gap: 12px;
   align-content: start;
+  max-height: 760px;
+  overflow-y: auto;
+  padding-right: 6px;
 }
 
 .library-card,
@@ -256,6 +271,8 @@
   border-radius: 24px;
   background: color-mix(in oklch, var(--panel-alt) 78%, white 22%);
   border: 1px solid color-mix(in oklch, var(--line) 84%, transparent 16%);
+  position: sticky;
+  top: 20px;
 }
 
 .builder-grid {
@@ -433,6 +450,20 @@ textarea {
   border: 1px solid color-mix(in oklch, var(--line) 86%, transparent 14%);
 }
 
+.rule-field span {
+  font-size: 0.88rem;
+  color: var(--muted-strong);
+}
+
+.analytics-numbers {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hero-panel h1 {
+  font-size: clamp(2.2rem, 3.5vw, 4.2rem);
+  max-width: 13ch;
+}
+
 .recommendation-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -490,6 +521,16 @@ textarea {
   .hero-panel,
   .operating-contract {
     grid-template-columns: 1fr;
+  }
+
+  .library-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .editor-card {
+    position: static;
   }
 }
 

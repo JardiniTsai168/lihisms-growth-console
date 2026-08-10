@@ -26,6 +26,12 @@ const rejectionReasons = [
 ]
 
 const colorModes = ['Signal board', 'Proof ledger', 'Promo burst']
+const usd = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+})
 
 function App() {
   const logoUrl = `${import.meta.env.BASE_URL}lihi-logo-primary.png`
@@ -312,10 +318,11 @@ function App() {
       const benefitTitle =
         lookupRecord(state.library, draft.metadata.benefitIds[0])?.title ?? '可追蹤點擊'
       const seed = stringScore(`${draft.id}${useCaseTitle}${benefitTitle}`)
-      const impressions = 1800 + (seed % 3200)
-      const ctr = 1.1 + ((seed % 28) / 10)
+      const impressions = 2200 + (seed % 4200)
+      const frequency = 1.2 + ((seed % 33) / 10)
+      const ctr = 0.9 + ((seed % 30) / 10)
       const clicks = Math.round((impressions * ctr) / 100)
-      const spend = 900 + (seed % 2400)
+      const spend = 36 + ((seed % 1100) / 10)
       const landingPageViews = Math.max(18, Math.round(clicks * 0.72))
       const registerSubmitted = Math.max(6, Math.round(landingPageViews * 0.36))
       const emailVerifiedSignups = Math.max(2, Math.round(registerSubmitted * 0.62))
@@ -328,6 +335,7 @@ function App() {
         creativeId: draft.creativeId,
         spend,
         impressions,
+        frequency,
         clicks,
         ctr,
         cpc,
@@ -372,6 +380,7 @@ function App() {
           <div>
             <p className="eyebrow">lihiSMS growth operating console</p>
             <h1>把素材、draft、數據、建議，收進同一條可回溯的成長流水線。</h1>
+            <p className="hero-note">Demo dashboard now normalizes all spend and CPA inputs in USD.</p>
           </div>
         </div>
         <div className="hero-metrics">
@@ -416,63 +425,65 @@ function App() {
           </div>
 
           <div className="library-layout">
-            <div className="library-filters">
-              {(['use_case', 'benefit', 'proof', 'template'] as LibraryKind[]).map(
-                (kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    className={selectedKind === kind ? 'chip active' : 'chip'}
-                    onClick={() => setSelectedKind(kind)}
-                  >
-                    {kind}
-                  </button>
-                ),
-              )}
-            </div>
+            <div className="library-stack">
+              <div className="library-filters">
+                {(['use_case', 'benefit', 'proof', 'template'] as LibraryKind[]).map(
+                  (kind) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      className={selectedKind === kind ? 'chip active' : 'chip'}
+                      onClick={() => setSelectedKind(kind)}
+                    >
+                      {kind}
+                    </button>
+                  ),
+                )}
+              </div>
 
-            <div className="library-list">
-              {state.library
-                .filter((record) => record.kind === selectedKind)
-                .map((record) => (
-                  <article key={record.id} className="library-card">
-                    <div className="library-card-top">
-                      <div>
-                        <h3>{record.title}</h3>
-                        <p>{record.summary}</p>
+              <div className="library-list">
+                {state.library
+                  .filter((record) => record.kind === selectedKind)
+                  .map((record) => (
+                    <article key={record.id} className="library-card">
+                      <div className="library-card-top">
+                        <div>
+                          <h3>{record.title}</h3>
+                          <p>{record.summary}</p>
+                        </div>
+                        <span className={record.status === 'active' ? 'pill active' : 'pill muted'}>
+                          {record.status}
+                        </span>
                       </div>
-                      <span className={record.status === 'active' ? 'pill active' : 'pill muted'}>
-                        {record.status}
-                      </span>
-                    </div>
-                    <div className="tag-row">
-                      {record.standardTags.map((tag) => (
-                        <span key={tag} className="tag">
-                          {tag}
-                        </span>
-                      ))}
-                      {record.freeformTags.map((tag) => (
-                        <span key={tag} className="tag subtle">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="library-card-actions">
-                      <button type="button" className="mini-button" onClick={() => handleEditRecord(record)}>
-                        Edit
-                      </button>
-                      {record.status === 'active' ? (
-                        <button
-                          type="button"
-                          className="mini-button danger"
-                          onClick={() => handleArchiveRecord(record.id)}
-                        >
-                          Archive
+                      <div className="tag-row">
+                        {record.standardTags.map((tag) => (
+                          <span key={tag} className="tag">
+                            {tag}
+                          </span>
+                        ))}
+                        {record.freeformTags.map((tag) => (
+                          <span key={tag} className="tag subtle">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="library-card-actions">
+                        <button type="button" className="mini-button" onClick={() => handleEditRecord(record)}>
+                          Edit
                         </button>
-                      ) : null}
-                    </div>
-                  </article>
-                ))}
+                        {record.status === 'active' ? (
+                          <button
+                            type="button"
+                            className="mini-button danger"
+                            onClick={() => handleArchiveRecord(record.id)}
+                          >
+                            Archive
+                          </button>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+              </div>
             </div>
 
             <aside className="editor-card">
@@ -803,7 +814,7 @@ function App() {
           <div className="funnel-row">
             <article>
               <span>Spend</span>
-              <strong>NT${Math.round(funnelTotals.spend).toLocaleString()}</strong>
+              <strong>{usd.format(funnelTotals.spend)}</strong>
             </article>
             <article>
               <span>LP view</span>
@@ -827,18 +838,19 @@ function App() {
                   <div>
                     <h3>{draft?.adName ?? metric.draftId}</h3>
                     <p>
-                      CTR {metric.ctr.toFixed(2)}% · CPC NT$
-                      {metric.cpc.toFixed(1)} · verified {metric.emailVerifiedSignups}
+                      CTR {metric.ctr.toFixed(2)}% · CPC {usd.format(metric.cpc)} · verified{' '}
+                      {metric.emailVerifiedSignups}
                     </p>
                   </div>
                   <div className="analytics-numbers">
-                    <span>Spend NT${metric.spend.toFixed(0)}</span>
+                    <span>Spend {usd.format(metric.spend)}</span>
                     <span>Impressions {metric.impressions}</span>
+                    <span>Frequency {metric.frequency.toFixed(2)}</span>
                     <span>
                       CPA{' '}
                       {metric.costPerVerifiedSignup === null
                         ? 'n/a'
-                        : `NT$${metric.costPerVerifiedSignup.toFixed(0)}`}
+                        : usd.format(metric.costPerVerifiedSignup)}
                     </span>
                   </div>
                 </article>
@@ -857,29 +869,24 @@ function App() {
           </div>
           <div className="rules-grid">
             <RuleField
-              label="Min spend"
+              label="Min spending"
               value={state.rules.minSpend}
               onChange={(value) => updateRules({ minSpend: value })}
             />
             <RuleField
-              label="Min impressions"
-              value={state.rules.minImpressions}
-              onChange={(value) => updateRules({ minImpressions: value })}
+              label="CTR Goal"
+              value={state.rules.ctrGoal}
+              onChange={(value) => updateRules({ ctrGoal: value })}
             />
             <RuleField
-              label="CTR drop %"
-              value={state.rules.ctrDropPercent}
-              onChange={(value) => updateRules({ ctrDropPercent: value })}
+              label="Max CPA"
+              value={state.rules.maxCpa}
+              onChange={(value) => updateRules({ maxCpa: value })}
             />
             <RuleField
-              label="CPA lift %"
-              value={state.rules.cpaLiftPercent}
-              onChange={(value) => updateRules({ cpaLiftPercent: value })}
-            />
-            <RuleField
-              label="Winner target CPA"
-              value={state.rules.winnerTargetCpa}
-              onChange={(value) => updateRules({ winnerTargetCpa: value })}
+              label="Frequency"
+              value={state.rules.maxFrequency}
+              onChange={(value) => updateRules({ maxFrequency: value })}
             />
           </div>
         </section>
@@ -929,9 +936,10 @@ function RuleField({
 }) {
   return (
     <label className="rule-field">
-      {label}
+      <span>{label}</span>
       <input
         type="number"
+        step="0.1"
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />

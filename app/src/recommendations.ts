@@ -16,65 +16,47 @@ export function buildRecommendations(
     return recommendations
   }
 
-  const averageCtr =
-    metrics.reduce((sum, item) => sum + item.ctr, 0) / metrics.length
-  const cpas = metrics
-    .map((item) => item.costPerVerifiedSignup)
-    .filter((value): value is number => value !== null)
-  const averageCpa =
-    cpas.length > 0
-      ? cpas.reduce((sum, value) => sum + value, 0) / cpas.length
-      : null
-
   for (const metric of metrics) {
     const draft = drafts.find((item) => item.id === metric.draftId)
     if (!draft) {
       continue
     }
 
-    const canJudge =
-      metric.spend >= rules.minSpend && metric.impressions >= rules.minImpressions
+    const canJudge = metric.spend >= rules.minSpend
 
-    if (
-      canJudge &&
-      metric.ctr <= averageCtr * (1 - rules.ctrDropPercent / 100)
-    ) {
+    if (canJudge && metric.ctr < rules.ctrGoal) {
       recommendations.push({
         kind: 'stop',
         title: `停掉 ${draft.adName}`,
-        body: `CTR ${metric.ctr.toFixed(2)}% 已低於同批平均 ${averageCtr.toFixed(
+        body: `CTR ${metric.ctr.toFixed(2)}% 已低於你設定的 ${rules.ctrGoal.toFixed(
           2,
-        )}% 的容忍線，建議先停掉這個素材。`,
+        )}% 目標，建議先停掉這個素材。`,
       })
       continue
     }
 
     if (
       canJudge &&
-      averageCpa !== null &&
       metric.costPerVerifiedSignup !== null &&
-      metric.costPerVerifiedSignup >= averageCpa * (1 + rules.cpaLiftPercent / 100)
+      metric.costPerVerifiedSignup > rules.maxCpa
     ) {
       recommendations.push({
         kind: 'stop',
         title: `收掉 ${draft.adName}`,
-        body: `每個 email 驗證註冊成本 ${metric.costPerVerifiedSignup.toFixed(
-          0,
-        )} 高於同批平均 ${averageCpa.toFixed(0)} 太多，建議停掉。`,
+        body: `每個 email 驗證註冊成本 US$${metric.costPerVerifiedSignup.toFixed(
+          2,
+        )} 已高於你設定的 US$${rules.maxCpa.toFixed(2)} 上限，建議停掉。`,
       })
       continue
     }
 
-    if (
-      metric.costPerVerifiedSignup !== null &&
-      metric.costPerVerifiedSignup <= rules.winnerTargetCpa
-    ) {
+    if (canJudge && metric.frequency > rules.maxFrequency) {
       recommendations.push({
-        kind: 'generate',
-        title: `替 ${draft.adName} 追加 3 張變體`,
-        body: `這張素材的 email 驗證註冊成本 ${metric.costPerVerifiedSignup.toFixed(
-          0,
-        )} 已低於你的贏家門檻 ${rules.winnerTargetCpa}，適合沿用同 angle 再生。`,
+        kind: 'stop',
+        title: `暫停 ${draft.adName}`,
+        body: `Frequency ${metric.frequency.toFixed(2)} 已高於你設定的 ${rules.maxFrequency.toFixed(
+          2,
+        )} 上限，建議先停掉避免疲勞。`,
       })
       continue
     }

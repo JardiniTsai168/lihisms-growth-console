@@ -79,6 +79,7 @@ export type AnalyticsMetric = {
   creativeId: string
   spend: number
   impressions: number
+  frequency: number
   clicks: number
   ctr: number
   cpc: number
@@ -91,10 +92,9 @@ export type AnalyticsMetric = {
 
 export type OptimizationRules = {
   minSpend: number
-  minImpressions: number
-  ctrDropPercent: number
-  cpaLiftPercent: number
-  winnerTargetCpa: number
+  ctrGoal: number
+  maxCpa: number
+  maxFrequency: number
 }
 
 export type AppState = {
