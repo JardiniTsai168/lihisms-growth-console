@@ -181,6 +181,18 @@ function App() {
     }))
   }
 
+  const handleAssetUpload = (
+    field: 'logoAsset' | 'productAsset',
+    fileList: FileList | null,
+  ) => {
+    const file = fileList?.[0]
+
+    setBatchForm((current) => ({
+      ...current,
+      [field]: file?.name ?? '',
+    }))
+  }
+
   const handleGenerateBatch = () => {
     if (
       !batchForm.useCaseId ||
@@ -782,28 +794,28 @@ function App() {
               <label>
                 Logo required
                 <input
-                  placeholder="logo file name or CDN URL"
-                  value={batchForm.logoAsset}
-                  onChange={(event) =>
-                    setBatchForm((current) => ({
-                      ...current,
-                      logoAsset: event.target.value,
-                    }))
-                  }
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => handleAssetUpload('logoAsset', event.target.files)}
                 />
+                <span className="helper-copy">
+                  {batchForm.logoAsset
+                    ? `已上傳：${batchForm.logoAsset}`
+                    : '請上傳 logo 圖檔'}
+                </span>
               </label>
               <label>
                 Product image optional
                 <input
-                  placeholder="product asset file name or CDN URL"
-                  value={batchForm.productAsset}
-                  onChange={(event) =>
-                    setBatchForm((current) => ({
-                      ...current,
-                      productAsset: event.target.value,
-                    }))
-                  }
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => handleAssetUpload('productAsset', event.target.files)}
                 />
+                <span className="helper-copy">
+                  {batchForm.productAsset
+                    ? `已上傳：${batchForm.productAsset}`
+                    : '可選填產品圖檔'}
+                </span>
               </label>
             </div>
 
