@@ -89,6 +89,7 @@ const library: StrategyRecord[] = [
 const exampleBatch: CreativeBatch = {
   id: 'batch-seed-001',
   useCaseId: 'use-member-winback',
+  productName: 'lihiSMS',
   benefitIds: ['benefit-trackable', 'benefit-short-link', 'benefit-invoice'],
   angleId: 'ANGLE-WINBACK-TRACK',
   promptVersion: 'v2.0.0-demo',
@@ -109,7 +110,7 @@ const exampleCreatives: CreativeAsset[] = [
     headline: 'SMS 不只送出，還知道誰有回來',
     kicker: '會員喚回 / 電商品牌',
     body: '把 lihi 短網址放進簡訊裡，回頭看每波喚回帶來多少點擊、多少註冊、哪些人重新動起來。',
-    proofLine: 'creative.bktsai.link 已回傳文案與 1:1 素材',
+    deliveryNote: 'creative.bktsai.link 已回傳文案與 1:1 素材',
     visualMode: 'Signal board',
     squareAsset: 'creative-seed-1-square.png',
     formatStatus: 'formats_ready',
@@ -120,6 +121,7 @@ const exampleCreatives: CreativeAsset[] = [
     metadata: {
       icp: '電商品牌',
       useCaseId: exampleBatch.useCaseId,
+      productName: exampleBatch.productName,
       benefitIds: exampleBatch.benefitIds,
       productLink: exampleBatch.productLink,
       logoAsset: exampleBatch.logoAsset,
@@ -139,7 +141,7 @@ const exampleCreatives: CreativeAsset[] = [
     headline: '把沉睡會員拉回來，也把數據一起拉回來',
     kicker: '點擊成效清楚回看',
     body: '喚回簡訊不是憑感覺發。每次 CTA 都能對照點擊、頁面進站與註冊結果，讓 CRM 知道誰值得再推。',
-    proofLine: '先回傳 1:1 審稿版，待核准後再補齊其他尺寸',
+    deliveryNote: '先回傳 1:1 審稿版，待核准後再補齊其他尺寸',
     visualMode: 'Promo burst',
     squareAsset: 'creative-seed-2-square.png',
     formatStatus: 'square_only',
@@ -150,6 +152,7 @@ const exampleCreatives: CreativeAsset[] = [
     metadata: {
       icp: '電商品牌',
       useCaseId: exampleBatch.useCaseId,
+      productName: exampleBatch.productName,
       benefitIds: exampleBatch.benefitIds,
       productLink: exampleBatch.productLink,
       logoAsset: exampleBatch.logoAsset,
@@ -169,7 +172,7 @@ const exampleCreatives: CreativeAsset[] = [
     headline: '想喚回老會員，先別再發看不到成效的簡訊',
     kicker: '成效導向 SMS',
     body: '把點擊追蹤、品牌短網址與正式商用流程收進同一套節奏，讓每一次喚回活動都能被優化。',
-    proofLine: '系統已準備好把 approved 版本延伸成其他投放格式',
+    deliveryNote: '系統已準備好把 approved 版本延伸成其他投放格式',
     visualMode: 'Proof ledger',
     squareAsset: 'creative-seed-3-square.png',
     formatStatus: 'square_only',
@@ -180,6 +183,7 @@ const exampleCreatives: CreativeAsset[] = [
     metadata: {
       icp: '電商品牌',
       useCaseId: exampleBatch.useCaseId,
+      productName: exampleBatch.productName,
       benefitIds: exampleBatch.benefitIds,
       productLink: exampleBatch.productLink,
       logoAsset: exampleBatch.logoAsset,

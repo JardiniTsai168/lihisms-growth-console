@@ -27,7 +27,7 @@ export type CreativeAsset = {
   headline: string
   kicker: string
   body: string
-  proofLine: string
+  deliveryNote: string
   visualMode: string
   squareAsset: string
   formatStatus: 'square_only' | 'formats_ready'
@@ -38,6 +38,7 @@ export type CreativeAsset = {
   metadata: {
     icp: string
     useCaseId: string
+    productName: string
     benefitIds: string[]
     productLink: string
     logoAsset: string
@@ -53,6 +54,7 @@ export type CreativeAsset = {
 export type CreativeBatch = {
   id: string
   useCaseId: string
+  productName: string
   benefitIds: string[]
   angleId: string
   promptVersion: string

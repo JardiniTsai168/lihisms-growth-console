@@ -53,6 +53,7 @@ const buildBatchForm = (library: StrategyRecord[]) => {
 
   return {
     useCaseId: useCase?.id ?? '',
+    productName: 'lihiSMS',
     benefitIds: benefits.slice(0, 3).map((item) => item.id),
     productLink: '',
     logoAsset: 'lihi-logo-primary.png',
@@ -183,6 +184,7 @@ function App() {
   const handleGenerateBatch = () => {
     if (
       !batchForm.useCaseId ||
+      !batchForm.productName.trim() ||
       batchForm.benefitIds.length < 3 ||
       !batchForm.logoAsset.trim()
     ) {
@@ -204,6 +206,7 @@ function App() {
       .slice(0, 28)
     const batchId = `batch-${timestamp}`
     const promptVersion = `v2.${state.batches.length + 1}.0`
+    const productName = batchForm.productName.trim()
     const productLink = batchForm.productLink.trim()
     const logoAsset = batchForm.logoAsset.trim()
     const productAsset = batchForm.productAsset.trim()
@@ -217,6 +220,7 @@ function App() {
     const batch: CreativeBatch = {
       id: batchId,
       useCaseId: useCase.id,
+      productName,
       benefitIds: batchForm.benefitIds,
       angleId,
       promptVersion,
@@ -244,11 +248,11 @@ function App() {
         creativeVersion: `A${index + 1}`,
         headline:
           copyMode === '品牌'
-            ? `${useCase.title}，把 SMS 變成可回溯的成長節奏`
-            : `${useCase.title}，把每次簡訊更推近轉單一步`,
+            ? `${useCase.title}，把 ${productName} 變成可回溯的成長節奏`
+            : `${useCase.title}，把 ${productName} 更推近轉單一步`,
         kicker: `${copyMode}文案 / ${visualMode}`,
-        body: `creative.bktsai.link 已收到 ${useCase.title}、${leadBenefit.title}、${supportBenefit.title}、產品連結與補充內容，先回傳這張 1:1 給你審核。`,
-        proofLine: `風格隨機 · ${copyMode}導向 · 感性/理性強度 ${emotionalIntensity}/5`,
+        body: `creative.bktsai.link 已收到 ${productName}、${useCase.title}、${leadBenefit.title}、${supportBenefit.title}、產品連結與補充內容，先回傳這張 1:1 給你審核。`,
+        deliveryNote: `風格隨機 · ${copyMode}導向 · 感性/理性強度 ${emotionalIntensity}/5`,
         visualMode,
         squareAsset: `${slugify(useCase.title)}-${index + 1}-1x1.png`,
         formatStatus: 'square_only',
@@ -259,6 +263,7 @@ function App() {
         metadata: {
           icp: '電商品牌',
           useCaseId: useCase.id,
+          productName,
           benefitIds: batchForm.benefitIds,
           productLink,
           logoAsset,
@@ -722,6 +727,20 @@ function App() {
             </div>
 
             <label>
+              產品名稱
+              <input
+                placeholder="例如 lihiSMS"
+                value={batchForm.productName}
+                onChange={(event) =>
+                  setBatchForm((current) => ({
+                    ...current,
+                    productName: event.target.value,
+                  }))
+                }
+              />
+            </label>
+
+            <label>
               Product / service link
               <input
                 placeholder="https://..."
@@ -810,7 +829,7 @@ function App() {
                   <p className="poster-kicker">{creative.kicker}</p>
                   <h3>{creative.headline}</h3>
                   <p>{creative.body}</p>
-                  <strong>{creative.proofLine}</strong>
+                  <strong>{creative.deliveryNote}</strong>
                   <footer>
                     <span>{creative.angleId}</span>
                     <span>{creative.creativeVersion}</span>
@@ -823,6 +842,7 @@ function App() {
                     <span className="tag subtle">1:1 {creative.squareAsset}</span>
                   </div>
                   <div className="creative-return">
+                    <span>Product: {creative.metadata.productName}</span>
                     <span>Copy mode: {creative.copyMode}</span>
                     <span>Emotion: {creative.emotionalIntensity}/5</span>
                     <span>Model: {creative.modelSetting}</span>
