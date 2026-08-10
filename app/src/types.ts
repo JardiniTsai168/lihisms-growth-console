@@ -35,6 +35,20 @@ export type CreativeAsset = {
   copyMode: '品牌' | '轉單'
   emotionalIntensity: number
   modelSetting: string
+  finalCopy: {
+    primaryText: string
+    headline: string
+    description: string
+    destinationUrl: string
+  } | null
+  assetDeliverables: Array<{
+    platform: string
+    label: string
+    url: string
+    width: number
+    height: number
+    mimeType: string
+  }>
   metadata: {
     icp: string
     useCaseId: string

@@ -118,6 +118,30 @@ const exampleCreatives: CreativeAsset[] = [
     copyMode: '品牌',
     emotionalIntensity: 3,
     modelSetting: '產品主視覺',
+    finalCopy: {
+      primaryText: '把簡訊從單次發送變成可回溯的成長節奏，讓每波喚回都知道誰回來了。',
+      headline: 'SMS 不只送出，還知道誰有回來',
+      description: 'creative.bktsai.link 已依平台回傳正確尺寸素材。',
+      destinationUrl: 'https://lihi.io/products/sms',
+    },
+    assetDeliverables: [
+      {
+        platform: 'Facebook',
+        label: 'feed',
+        url: 'https://creative.bktsai.link/assets/creative_001_facebook_feed.png',
+        width: 1080,
+        height: 1350,
+        mimeType: 'image/png',
+      },
+      {
+        platform: 'Instagram',
+        label: 'story',
+        url: 'https://creative.bktsai.link/assets/creative_001_instagram_story.png',
+        width: 1080,
+        height: 1920,
+        mimeType: 'image/png',
+      },
+    ],
     metadata: {
       icp: '電商品牌',
       useCaseId: exampleBatch.useCaseId,
@@ -149,6 +173,8 @@ const exampleCreatives: CreativeAsset[] = [
     copyMode: '轉單',
     emotionalIntensity: 5,
     modelSetting: '隨機模特兒',
+    finalCopy: null,
+    assetDeliverables: [],
     metadata: {
       icp: '電商品牌',
       useCaseId: exampleBatch.useCaseId,
@@ -180,6 +206,8 @@ const exampleCreatives: CreativeAsset[] = [
     copyMode: '品牌',
     emotionalIntensity: 2,
     modelSetting: '產品主視覺',
+    finalCopy: null,
+    assetDeliverables: [],
     metadata: {
       icp: '電商品牌',
       useCaseId: exampleBatch.useCaseId,

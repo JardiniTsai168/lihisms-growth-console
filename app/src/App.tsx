@@ -15,7 +15,49 @@ import type {
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
-const STORAGE_KEY = 'lihisms-growth-console-v3'
+const STORAGE_KEY = 'lihisms-growth-console-v4'
+const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
+
+type ReviewResponse = {
+  batchId: string
+  promptVersion: string
+  creatives: Array<{
+    creativeId: string
+    creativeVersion: string
+    headline: string
+    kicker: string
+    body: string
+    deliveryNote: string
+    visualMode: string
+    copyMode: CreativeAsset['copyMode']
+    emotionalIntensity: number
+    modelSetting: string
+    squareAsset: {
+      url: string
+      width: number
+      height: number
+      mimeType: string
+    }
+  }>
+}
+
+type FormatsResponse = {
+  creativeId: string
+  finalCopy: {
+    primaryText: string
+    headline: string
+    description: string
+    destinationUrl: string
+  }
+  assetDeliverables: Array<{
+    platform: string
+    label: string
+    url: string
+    width: number
+    height: number
+    mimeType: string
+  }>
+}
 
 const rejectionReasons = [
   '賣點不對',
@@ -26,9 +68,6 @@ const rejectionReasons = [
   '其他',
 ]
 
-const colorModes = ['Signal board', 'Proof ledger', 'Promo burst']
-const copyModes: CreativeAsset['copyMode'][] = ['品牌', '轉單']
-const modelSettings = ['產品主視覺', '隨機模特兒', '產品情境照']
 const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Google Display', 'LINE']
 
 const usd = new Intl.NumberFormat('en-US', {
@@ -56,7 +95,7 @@ const buildBatchForm = (library: StrategyRecord[]) => {
     productName: 'lihiSMS',
     benefitIds: benefits.slice(0, 3).map((item) => item.id),
     productLink: '',
-    logoAsset: 'lihi-logo-primary.png',
+    logoAsset: '',
     productAsset: '',
     additionalNotes: '',
   }
@@ -69,6 +108,11 @@ function App() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(buildEmptyForm)
   const [batchForm, setBatchForm] = useState(() => buildBatchForm(initialState.library))
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [productImageFile, setProductImageFile] = useState<File | null>(null)
+  const [requestError, setRequestError] = useState<string | null>(null)
+  const [isGeneratingBatch, setIsGeneratingBatch] = useState(false)
+  const [approvingCreativeId, setApprovingCreativeId] = useState<string | null>(null)
 
   const activeLibrary = state.library.filter((record) => record.status === 'active')
   const latestBatch = state.batches[0]
@@ -187,19 +231,30 @@ function App() {
   ) => {
     const file = fileList?.[0]
 
+    if (field === 'logoAsset') {
+      setLogoFile(file ?? null)
+      return setBatchForm((current) => ({
+        ...current,
+        logoAsset: file?.name ?? '',
+      }))
+    }
+
+    setProductImageFile(file ?? null)
+
     setBatchForm((current) => ({
       ...current,
-      [field]: file?.name ?? '',
+      productAsset: file?.name ?? '',
     }))
   }
 
-  const handleGenerateBatch = () => {
+  const handleGenerateBatch = async () => {
     if (
       !batchForm.useCaseId ||
       !batchForm.productName.trim() ||
       batchForm.benefitIds.length < 3 ||
-      !batchForm.logoAsset.trim()
+      !logoFile
     ) {
+      setRequestError('請填完產品名稱、至少 3 個 benefits，並上傳 logo。')
       return
     }
 
@@ -210,68 +265,81 @@ function App() {
       .filter((record): record is StrategyRecord => Boolean(record))
 
     if (!useCase || benefits.length < 3) {
+      setRequestError('目前的 use case / benefits 不完整，請重新確認。')
       return
     }
 
     const angleId = `ANGLE-${slugify(useCase.title)}-${slugify(benefits[0].title)}`
       .toUpperCase()
       .slice(0, 28)
-    const batchId = `batch-${timestamp}`
-    const promptVersion = `v2.${state.batches.length + 1}.0`
     const productName = batchForm.productName.trim()
     const productLink = batchForm.productLink.trim()
-    const logoAsset = batchForm.logoAsset.trim()
-    const productAsset = batchForm.productAsset.trim()
+    const logoAsset = logoFile.name
+    const productAsset = productImageFile?.name ?? ''
     const additionalNotes = batchForm.additionalNotes.trim()
 
-    const creativeIds = Array.from(
-      { length: 3 },
-      (_, index) => `creative-${timestamp}-${index + 1}`,
-    )
+    const payload = new FormData()
+    payload.append('productName', productName)
+    payload.append('useCaseId', useCase.id)
+    payload.append('useCaseTitle', useCase.title)
+    payload.append('benefitIds', JSON.stringify(batchForm.benefitIds))
+    payload.append('benefitTitles', JSON.stringify(benefits.map((benefit) => benefit.title)))
+    payload.append('productLink', productLink)
+    payload.append('additionalNotes', additionalNotes)
+    payload.append('logo', logoFile)
 
-    const batch: CreativeBatch = {
-      id: batchId,
-      useCaseId: useCase.id,
-      productName,
-      benefitIds: batchForm.benefitIds,
-      angleId,
-      promptVersion,
-      productLink,
-      logoAsset,
-      productAsset,
-      additionalNotes,
-      createdAt: timestamp,
-      creativeIds,
+    if (productImageFile) {
+      payload.append('productImage', productImageFile)
     }
 
-    const creatives: CreativeAsset[] = creativeIds.map((id, index) => {
-      const leadBenefit = benefits[index % benefits.length]
-      const supportBenefit = benefits[(index + 1) % benefits.length]
-      const seed = stringScore(`${angleId}-${id}`)
-      const copyMode = copyModes[seed % copyModes.length]
-      const emotionalIntensity = (seed % 5) + 1
-      const visualMode = colorModes[(seed + index) % colorModes.length]
-      const modelSetting = modelSettings[(seed + benefits.length) % modelSettings.length]
+    setRequestError(null)
+    setIsGeneratingBatch(true)
 
-      return {
-        id,
-        batchId,
+    try {
+      const response = await fetch(`${CREATIVE_API_BASE}/generate-review`, {
+        method: 'POST',
+        body: payload,
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response))
+      }
+
+      const result = (await response.json()) as ReviewResponse
+      const creativeIds = result.creatives.map((creative) => creative.creativeId)
+      const batch: CreativeBatch = {
+        id: result.batchId,
+        useCaseId: useCase.id,
+        productName,
+        benefitIds: batchForm.benefitIds,
         angleId,
-        creativeVersion: `A${index + 1}`,
-        headline:
-          copyMode === '品牌'
-            ? `${useCase.title}，把 ${productName} 變成可回溯的成長節奏`
-            : `${useCase.title}，把 ${productName} 更推近轉單一步`,
-        kicker: `${copyMode}文案 / ${visualMode}`,
-        body: `creative.bktsai.link 已收到 ${productName}、${useCase.title}、${leadBenefit.title}、${supportBenefit.title}、產品連結與補充內容，先回傳這張 1:1 給你審核。`,
-        deliveryNote: `風格隨機 · ${copyMode}導向 · 感性/理性強度 ${emotionalIntensity}/5`,
-        visualMode,
-        squareAsset: `${slugify(useCase.title)}-${index + 1}-1x1.png`,
+        promptVersion: result.promptVersion,
+        productLink,
+        logoAsset,
+        productAsset,
+        additionalNotes,
+        createdAt: timestamp,
+        creativeIds,
+      }
+
+      const creatives: CreativeAsset[] = result.creatives.map((creative) => ({
+        id: creative.creativeId,
+        batchId: result.batchId,
+        angleId,
+        creativeVersion: creative.creativeVersion,
+        headline: creative.headline,
+        kicker: creative.kicker,
+        body: creative.body,
+        deliveryNote: creative.deliveryNote,
+        visualMode: creative.visualMode,
+        squareAsset: creative.squareAsset.url,
         formatStatus: 'square_only',
         selectedPlatforms: [],
-        copyMode,
-        emotionalIntensity,
-        modelSetting,
+        copyMode: creative.copyMode,
+        emotionalIntensity: creative.emotionalIntensity,
+        modelSetting: creative.modelSetting,
+        finalCopy: null,
+        assetDeliverables: [],
         metadata: {
           icp: '電商品牌',
           useCaseId: useCase.id,
@@ -283,17 +351,21 @@ function App() {
           additionalNotes,
           createdAt: timestamp,
         },
-        promptVersion,
+        promptVersion: result.promptVersion,
         reviewStatus: 'pending',
         rejectionReason: null,
-      }
-    })
+      }))
 
-    setState((current) => ({
-      ...current,
-      batches: [batch, ...current.batches],
-      creatives: [...creatives, ...current.creatives],
-    }))
+      setState((current) => ({
+        ...current,
+        batches: [batch, ...current.batches],
+        creatives: [...creatives, ...current.creatives],
+      }))
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : '批次生成失敗。')
+    } finally {
+      setIsGeneratingBatch(false)
+    }
   }
 
   const rejectCreative = (creativeId: string, reason: string) => {
@@ -336,20 +408,55 @@ function App() {
     }))
   }
 
-  const approveCreative = (creativeId: string) => {
-    setState((current) => ({
-      ...current,
-      creatives: current.creatives.map((creative) =>
-        creative.id === creativeId && creative.selectedPlatforms.length > 0
-          ? {
-              ...creative,
-              reviewStatus: 'approved',
-              rejectionReason: null,
-              formatStatus: 'formats_ready',
-            }
-          : creative,
-      ),
-    }))
+  const approveCreative = async (creativeId: string) => {
+    const creative = state.creatives.find((item) => item.id === creativeId)
+    if (!creative || creative.selectedPlatforms.length === 0) {
+      setRequestError('請先選至少 1 個平台，再按 Approved。')
+      return
+    }
+
+    setRequestError(null)
+    setApprovingCreativeId(creativeId)
+
+    try {
+      const response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          batchId: creative.batchId,
+          creativeId,
+          selectedPlatforms: creative.selectedPlatforms,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response))
+      }
+
+      const result = (await response.json()) as FormatsResponse
+
+      setState((current) => ({
+        ...current,
+        creatives: current.creatives.map((item) =>
+          item.id === creativeId
+            ? {
+                ...item,
+                reviewStatus: 'approved',
+                rejectionReason: null,
+                formatStatus: 'formats_ready',
+                finalCopy: result.finalCopy,
+                assetDeliverables: result.assetDeliverables,
+              }
+            : item,
+        ),
+      }))
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : '版位生成失敗。')
+    } finally {
+      setApprovingCreativeId(null)
+    }
   }
 
   const createDraftAds = () => {
@@ -367,11 +474,16 @@ function App() {
       campaignName: `lihiSMS | 電商品牌 | ${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? '未命名'}`,
       adsetName: `${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? 'Use Case'} / ${creative.selectedPlatforms.join(', ')}`,
       adName: `${creative.angleId} / ${creative.creativeVersion}`,
-      primaryText: creative.body,
-      headline: creative.headline,
-      description: `creative.bktsai.link 已依勾選平台回傳正確尺寸素材。`,
-      destinationUrl: creative.metadata.productLink || 'https://lihi.io/products/sms',
-      assetDeliverables: buildAssetDeliverables(creative.selectedPlatforms),
+      primaryText: creative.finalCopy?.primaryText ?? creative.body,
+      headline: creative.finalCopy?.headline ?? creative.headline,
+      description:
+        creative.finalCopy?.description ??
+        'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
+      destinationUrl:
+        creative.finalCopy?.destinationUrl ||
+        creative.metadata.productLink ||
+        'https://lihi.io/products/sms',
+      assetDeliverables: buildAssetDeliverables(creative),
       metadata: {
         icp: creative.metadata.icp,
         useCaseId: creative.metadata.useCaseId,
@@ -469,6 +581,11 @@ function App() {
     setEditingId(null)
     setForm(buildEmptyForm())
     setBatchForm(buildBatchForm(initialState.library))
+    setLogoFile(null)
+    setProductImageFile(null)
+    setRequestError(null)
+    setIsGeneratingBatch(false)
+    setApprovingCreativeId(null)
   }
 
   return (
@@ -691,7 +808,7 @@ function App() {
               <p className="eyebrow">02 / Creative batch</p>
               <h2>素材批次生成</h2>
             </div>
-            <span className="pill active">creative.bktsai.link demo mode</span>
+            <span className="pill active">creative.bktsai.link live bridge</span>
           </div>
 
           <div className="builder-flow">
@@ -835,9 +952,16 @@ function App() {
             </label>
           </div>
 
-          <button className="primary-button" type="button" onClick={handleGenerateBatch}>
-            Generate Ads
+          <button
+            className="primary-button"
+            type="button"
+            onClick={handleGenerateBatch}
+            disabled={isGeneratingBatch}
+          >
+            {isGeneratingBatch ? 'Generating…' : 'Generate Ads'}
           </button>
+
+          {requestError ? <p className="helper-copy">{requestError}</p> : null}
 
           {latestBatch ? (
             <div className="metadata-strip">
@@ -875,7 +999,7 @@ function App() {
                   <div className="tag-row">
                     <span className="tag">{creative.metadata.icp}</span>
                     <span className="tag">{creative.promptVersion}</span>
-                    <span className="tag subtle">1:1 {creative.squareAsset}</span>
+                    <span className="tag subtle">1:1 {assetLabelFromUrl(creative.squareAsset)}</span>
                   </div>
                   <div className="creative-return">
                     <span>Product: {creative.metadata.productName}</span>
@@ -883,8 +1007,9 @@ function App() {
                     <span>Emotion: {creative.emotionalIntensity}/5</span>
                     <span>Model: {creative.modelSetting}</span>
                     <span>Logo: {creative.metadata.logoAsset}</span>
+                    <span>Product: {creative.metadata.productAsset || 'none'}</span>
                     <span>
-                      Product: {creative.metadata.productAsset || 'none'}
+                      Deliverables: {creative.assetDeliverables.length > 0 ? creative.assetDeliverables.length : 'pending'}
                     </span>
                   </div>
                   <div>
@@ -910,9 +1035,10 @@ function App() {
                     <button
                       type="button"
                       className={creative.reviewStatus === 'approved' ? 'mini-button success' : 'mini-button'}
+                      disabled={approvingCreativeId === creative.id}
                       onClick={() => approveCreative(creative.id)}
                     >
-                      Approved
+                      {approvingCreativeId === creative.id ? 'Approving…' : 'Approved'}
                     </button>
                     <p className="helper-copy">
                       {creative.selectedPlatforms.length > 0
@@ -1179,8 +1305,34 @@ function formatDate(value: string) {
   }).format(new Date(value))
 }
 
-function buildAssetDeliverables(platforms: Platform[]) {
-  return platforms.map((platform) => `${platform}: returned by creative.bktsai.link`)
+function buildAssetDeliverables(creative: CreativeAsset) {
+  if (creative.assetDeliverables.length > 0) {
+    return creative.assetDeliverables.map((asset) => {
+      return `${asset.platform}: ${asset.label} ${asset.width}x${asset.height}`
+    })
+  }
+
+  return creative.selectedPlatforms.map((platform) => {
+    return `${platform}: returned by creative.bktsai.link`
+  })
+}
+
+function assetLabelFromUrl(value: string) {
+  try {
+    const pathname = new URL(value).pathname
+    return pathname.split('/').pop() ?? value
+  } catch {
+    return value
+  }
+}
+
+async function readErrorMessage(response: Response) {
+  try {
+    const payload = (await response.json()) as { error?: { message?: string } }
+    return payload.error?.message ?? `Request failed with ${response.status}`
+  } catch {
+    return `Request failed with ${response.status}`
+  }
 }
 
 export default App
