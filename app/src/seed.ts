@@ -16,7 +16,7 @@ const record = (
   summary: string,
   standardTags: string[],
   notes = '',
-  options?: Partial<Pick<StrategyRecord, 'productLink' | 'logoAsset' | 'productAsset'>>,
+  options?: Partial<Pick<StrategyRecord, 'logoAsset' | 'productAsset'>>,
 ): StrategyRecord => ({
   id,
   kind,
@@ -26,7 +26,6 @@ const record = (
   freeformTags: [],
   status: 'active',
   notes,
-  productLink: options?.productLink ?? '',
   logoAsset: options?.logoAsset ?? '',
   productAsset: options?.productAsset ?? '',
   createdAt: now,
@@ -36,8 +35,6 @@ const record = (
 export const standardTagBank: Record<StrategyRecord['kind'], string[]> = {
   use_case: ['會員喚回', '新品上架', '限時促購', '沉睡顧客喚醒', 'VIP 專屬通知'],
   benefit: ['可追蹤點擊', 'lihi 短網址', '快速上架', '台灣發票', '成效可回溯'],
-  proof: ['台灣發票', '點擊報表', '品牌短網址', '正式商用', '電商可用'],
-  template: ['Proof-first ledger', 'Promo burst', 'Signal board'],
 }
 
 export const defaultRules: OptimizationRules = {
@@ -56,7 +53,6 @@ const library: StrategyRecord[] = [
     ['會員喚回', '沉睡顧客喚醒'],
     '',
     {
-      productLink: 'https://lihi.io/products/sms',
       logoAsset: 'lihi-logo-primary.png',
       productAsset: 'sms-dashboard-packshot.png',
     },
@@ -69,7 +65,6 @@ const library: StrategyRecord[] = [
     ['新品上架'],
     '',
     {
-      productLink: 'https://lihi.io/products/sms-launch',
       logoAsset: 'lihi-logo-primary.png',
       productAsset: 'new-launch-phone-mockup.png',
     },
@@ -82,7 +77,6 @@ const library: StrategyRecord[] = [
     ['限時促購'],
     '',
     {
-      productLink: 'https://lihi.io/products/sms-flash-sale',
       logoAsset: 'lihi-logo-primary.png',
       productAsset: 'flash-sale-banner-pack.png',
     },
@@ -107,34 +101,6 @@ const library: StrategyRecord[] = [
     '可開台灣發票',
     '正式商用時不會卡採購與報帳流程，能更順利進入品牌年度工具名單。',
     ['台灣發票', '正式商用'],
-  ),
-  record(
-    'proof-reporting',
-    'proof',
-    '點擊報表可回看',
-    '每波活動都能留下一條可追蹤的報表軌跡，方便 CRM 接續推進。',
-    ['點擊報表'],
-  ),
-  record(
-    'proof-taiwan-invoice',
-    'proof',
-    '台灣公司採購友善',
-    '支援台灣發票與正式商業流程，讓品牌導入阻力更低。',
-    ['台灣發票', '正式商用'],
-  ),
-  record(
-    'template-ledger',
-    'template',
-    'Proof-first ledger',
-    '強調證據、數字和品牌信任的廣告視覺模板。',
-    ['Proof-first ledger'],
-  ),
-  record(
-    'template-burst',
-    'template',
-    'Promo burst',
-    '針對促購、檔期、時間壓力的爆發式視覺模板。',
-    ['Promo burst'],
   ),
 ]
 

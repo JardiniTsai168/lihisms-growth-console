@@ -56,7 +56,7 @@ const buildBatchForm = (library: StrategyRecord[]) => {
   return {
     useCaseId: useCase?.id ?? '',
     benefitIds: benefits.slice(0, 3).map((item) => item.id),
-    productLink: useCase?.productLink ?? '',
+    productLink: '',
     logoAsset: useCase?.logoAsset ?? 'lihi-logo-primary.png',
     productAsset: useCase?.productAsset ?? '',
     additionalNotes: '',
@@ -147,8 +147,6 @@ function App() {
       title: form.title.trim(),
       summary: form.summary.trim(),
       notes: form.notes.trim(),
-      productLink:
-        state.library.find((record) => record.id === editingId)?.productLink ?? '',
       logoAsset: form.logoAsset.trim(),
       productAsset: form.productAsset.trim(),
       standardTags: form.standardTags,
@@ -203,7 +201,6 @@ function App() {
     setBatchForm((current) => ({
       ...current,
       useCaseId,
-      productLink: useCase?.productLink ?? current.productLink,
       logoAsset: useCase?.logoAsset ?? current.logoAsset,
       productAsset: useCase?.productAsset ?? current.productAsset,
     }))
@@ -233,7 +230,7 @@ function App() {
       .slice(0, 28)
     const batchId = `batch-${timestamp}`
     const promptVersion = `v2.${state.batches.length + 1}.0`
-    const productLink = batchForm.productLink.trim() || useCase.productLink
+    const productLink = batchForm.productLink.trim()
     const logoAsset = batchForm.logoAsset.trim()
     const productAsset = batchForm.productAsset.trim()
     const additionalNotes = batchForm.additionalNotes.trim()
@@ -540,7 +537,7 @@ function App() {
           <div className="library-layout">
             <div className="library-stack">
               <div className="library-filters">
-                {(['use_case', 'benefit', 'proof', 'template'] as LibraryKind[]).map(
+                {(['use_case', 'benefit'] as LibraryKind[]).map(
                   (kind) => (
                     <button
                       key={kind}
@@ -580,7 +577,7 @@ function App() {
                           </span>
                         ))}
                       </div>
-                      {record.productLink || record.logoAsset || record.productAsset ? (
+                      {record.logoAsset || record.productAsset ? (
                         <div className="library-meta-strip">
                           {record.logoAsset ? <span>Logo: {record.logoAsset}</span> : null}
                           {record.productAsset ? <span>Product: {record.productAsset}</span> : null}
@@ -621,8 +618,6 @@ function App() {
                 >
                   <option value="use_case">use_case</option>
                   <option value="benefit">benefit</option>
-                  <option value="proof">proof</option>
-                  <option value="template">template</option>
                 </select>
               </label>
               <label>

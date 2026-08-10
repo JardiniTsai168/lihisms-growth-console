@@ -1,4 +1,4 @@
-export type LibraryKind = 'use_case' | 'benefit' | 'proof' | 'template'
+export type LibraryKind = 'use_case' | 'benefit'
 
 export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
@@ -15,7 +15,6 @@ export type StrategyRecord = {
   freeformTags: string[]
   status: 'active' | 'archived'
   notes: string
-  productLink: string
   logoAsset: string
   productAsset: string
   createdAt: string
