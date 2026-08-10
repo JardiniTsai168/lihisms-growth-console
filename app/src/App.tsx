@@ -383,34 +383,36 @@ function App() {
             <p className="hero-note">Demo dashboard now normalizes all spend and CPA inputs in USD.</p>
           </div>
         </div>
-        <div className="hero-metrics">
-          <article>
-            <span>Main KPI</span>
-            <strong>email verified signup</strong>
-          </article>
-          <article>
-            <span>Main ICP</span>
-            <strong>電商品牌</strong>
-          </article>
-          <article>
-            <span>Control mode</span>
-            <strong>系統只建議，你才執行</strong>
-          </article>
+        <div className="hero-side">
+          <div className="hero-metrics">
+            <article>
+              <span>Main KPI</span>
+              <strong>email verified signup</strong>
+            </article>
+            <article>
+              <span>Main ICP</span>
+              <strong>電商品牌</strong>
+            </article>
+            <article>
+              <span>Control mode</span>
+              <strong>系統只建議，你才執行</strong>
+            </article>
+          </div>
+
+          <section className="hero-contract" aria-label="Operating contract">
+            <div className="hero-contract-header">
+              <p className="eyebrow">Operating contract</p>
+              <h2>第一版邊界</h2>
+            </div>
+            <ul>
+              <li>每次只測 1 個 use case，搭配 1 到 2 個 benefits。</li>
+              <li>每輪只產 3 張圖，走同一個 angle 的變體。</li>
+              <li>素材先人工審核，再自動建 Facebook draft。</li>
+              <li>Airbyte 只拉必要欄位，先不做全量 data warehouse。</li>
+            </ul>
+          </section>
         </div>
       </header>
-
-      <section className="operating-contract">
-        <div>
-          <p className="eyebrow">Operating contract</p>
-          <h2>第一版邊界</h2>
-        </div>
-        <ul>
-          <li>每次只測 1 個 use case，搭配 1 到 2 個 benefits。</li>
-          <li>每輪只產 3 張圖，走同一個 angle 的變體。</li>
-          <li>素材先人工審核，再自動建 Facebook draft。</li>
-          <li>Airbyte 只拉必要欄位，先不做全量 data warehouse。</li>
-        </ul>
-      </section>
 
       <main className="dashboard">
         <section className="panel span-two">
