@@ -45,6 +45,8 @@
   margin-top: 16px;
   max-width: 44ch;
   color: var(--muted-strong);
+  font-size: 0.92rem;
+  line-height: 1.6;
 }
 
 .brand-mark {
@@ -69,17 +71,18 @@
 .hero-metrics span,
 .funnel-row span {
   display: block;
-  font-size: 0.82rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.15em;
-  color: var(--muted);
+  letter-spacing: 0.05em;
+  color: rgba(26, 26, 94, 0.6);
   margin-bottom: 10px;
 }
 
 .hero-metrics strong,
 .funnel-row strong {
-  color: var(--ink);
-  font-size: 1.08rem;
+  color: var(--brand-deep);
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 
 .operating-contract {
@@ -125,9 +128,10 @@
 .eyebrow {
   margin: 0 0 10px;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 0.76rem;
-  color: var(--muted-strong);
+  letter-spacing: 0.05em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: rgba(26, 26, 94, 0.6);
 }
 
 .ghost-button,
@@ -200,7 +204,8 @@
   gap: 8px;
   padding: 8px 12px;
   border-radius: 999px;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
+  font-weight: 700;
   color: var(--ink);
   background: color-mix(in oklch, var(--brand) 16%, white 84%);
 }
@@ -283,6 +288,7 @@ label,
 .field-label {
   color: var(--muted-strong);
   font-size: 0.92rem;
+  font-weight: 700;
 }
 
 input,
@@ -320,8 +326,8 @@ textarea {
 
 .metadata-strip {
   margin-top: 16px;
-  font-size: 0.85rem;
-  color: var(--muted-strong);
+  font-size: 0.82rem;
+  color: rgba(26, 26, 94, 0.7);
 }
 
 .creative-grid {
@@ -378,8 +384,9 @@ textarea {
 
 .poster-kicker {
   font-size: 0.82rem;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  font-weight: 700;
 }
 
 .creative-poster h3,
@@ -427,7 +434,8 @@ textarea {
 }
 
 .helper-copy {
-  color: var(--muted);
+  color: rgba(26, 26, 94, 0.7);
+  line-height: 1.6;
 }
 
 .funnel-row {
@@ -451,8 +459,9 @@ textarea {
 }
 
 .rule-field span {
-  font-size: 0.88rem;
+  font-size: 0.92rem;
   color: var(--muted-strong);
+  font-weight: 700;
 }
 
 .analytics-numbers {
@@ -460,8 +469,11 @@ textarea {
 }
 
 .hero-panel h1 {
-  font-size: clamp(2.2rem, 3.5vw, 4.2rem);
-  max-width: 13ch;
+  font-size: clamp(1.5rem, 2.4vw, 2.1rem);
+  line-height: 1.02;
+  letter-spacing: -0.05em;
+  max-width: 24ch;
+  text-wrap: balance;
 }
 
 .recommendation-grid {
@@ -495,6 +507,7 @@ textarea {
   padding: 7px 10px;
   border-radius: 999px;
   font-size: 0.78rem;
+  font-weight: 700;
   background: rgba(255, 255, 255, 0.78);
   color: var(--ink);
 }
