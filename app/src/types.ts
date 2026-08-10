@@ -74,9 +74,15 @@ export type DraftAd = {
   campaignName: string
   adsetName: string
   adName: string
+  primaryText: string
+  headline: string
+  description: string
+  destinationUrl: string
+  assetDeliverables: string[]
   metadata: {
     icp: string
     useCaseId: string
+    productName: string
     benefitIds: string[]
     angleId: string
     creativeVersion: string

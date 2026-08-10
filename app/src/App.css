@@ -465,6 +465,45 @@ textarea {
   gap: 12px;
 }
 
+.api-spec-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.api-spec-card,
+.draft-schema {
+  display: grid;
+  gap: 8px;
+}
+
+.api-spec-card {
+  border-radius: 22px;
+  padding: 16px;
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  background: color-mix(in oklch, var(--panel-alt) 84%, white 16%);
+}
+
+.api-spec-card h3 {
+  margin: 0;
+}
+
+.api-spec-card p {
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.5;
+}
+
+.draft-schema span {
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  color: rgba(26, 26, 94, 0.78);
+  font-size: 0.82rem;
+}
+
 .draft-card,
 .analytics-card {
   display: flex;
@@ -567,7 +606,8 @@ textarea {
 
   .creative-grid,
   .recommendation-grid,
-  .asset-grid {
+  .asset-grid,
+  .api-spec-grid {
     grid-template-columns: 1fr;
   }
 

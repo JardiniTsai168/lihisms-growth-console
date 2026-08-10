@@ -355,9 +355,15 @@ function App() {
       campaignName: `lihiSMS | 電商品牌 | ${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? '未命名'}`,
       adsetName: `${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? 'Use Case'} / ${creative.selectedPlatforms.join(', ')}`,
       adName: `${creative.angleId} / ${creative.creativeVersion}`,
+      primaryText: creative.body,
+      headline: creative.headline,
+      description: `creative.bktsai.link 已依勾選平台回傳正確尺寸素材。`,
+      destinationUrl: creative.metadata.productLink || 'https://lihi.io/products/sms',
+      assetDeliverables: buildAssetDeliverables(creative.selectedPlatforms),
       metadata: {
         icp: creative.metadata.icp,
         useCaseId: creative.metadata.useCaseId,
+        productName: creative.metadata.productName,
         benefitIds: creative.metadata.benefitIds,
         angleId: creative.angleId,
         creativeVersion: creative.creativeVersion,
@@ -677,10 +683,28 @@ function App() {
           </div>
 
           <div className="builder-flow">
-            <span>Send use case + benefits + product link + extra notes</span>
+            <span>Stage 1: send product + use case + benefits + assets</span>
             <span>Random style / copy mode / emotion 1-5</span>
             <span>Return copy + 1:1 creative first</span>
-            <span>Approved 後補齊其他格式並進 draft builder</span>
+            <span>Stage 2: Approved 後依平台回傳正確尺寸</span>
+          </div>
+
+          <div className="api-spec-grid">
+            <article className="api-spec-card">
+              <p className="eyebrow">Stage 1 / Request</p>
+              <h3>Send to creative.bktsai.link</h3>
+              <p>產品名稱、use case、3-5 benefits、product link、logo、product image、補充內容。</p>
+            </article>
+            <article className="api-spec-card">
+              <p className="eyebrow">Stage 1 / Response</p>
+              <h3>Review Payload</h3>
+              <p>回傳文案、1:1 素材、creative ids，讓使用者先做人審與平台勾選。</p>
+            </article>
+            <article className="api-spec-card">
+              <p className="eyebrow">Stage 2 / Approved</p>
+              <h3>Platform-based Return</h3>
+              <p>送出 approved creative 與勾選平台，creative.bktsai.link 自動回傳該平台正確尺寸與最終文案。</p>
+            </article>
           </div>
 
           <div className="builder-grid">
@@ -880,8 +904,8 @@ function App() {
                     </button>
                     <p className="helper-copy">
                       {creative.selectedPlatforms.length > 0
-                        ? `已選平台：${creative.selectedPlatforms.join(', ')}`
-                        : '先選至少 1 個平台，系統才會補齊其他版位。'}
+                        ? `已選平台：${creative.selectedPlatforms.join(', ')}，Approved 後會回傳這些平台需要的正確尺寸。`
+                        : '先選至少 1 個平台，系統才會向 creative.bktsai.link 取回正確尺寸。'}
                     </p>
                     <div className="reason-wrap">
                       {rejectionReasons.map((reason) => (
@@ -930,12 +954,24 @@ function App() {
                   <h3>{draft.adName}</h3>
                   <p>{draft.adsetName}</p>
                   <p className="helper-copy">{draft.campaignName}</p>
+                  <div className="draft-schema">
+                    <span>Product: {draft.metadata.productName}</span>
+                    <span>Primary text: {draft.primaryText}</span>
+                    <span>Headline: {draft.headline}</span>
+                    <span>Description: {draft.description}</span>
+                    <span>URL: {draft.destinationUrl}</span>
+                  </div>
                 </div>
                 <div className="draft-actions">
                   <span className="pill active">{draft.metadata.angleId}</span>
                   {draft.metadata.selectedPlatforms.map((platform) => (
                     <span key={platform} className="pill muted">
                       {platform}
+                    </span>
+                  ))}
+                  {draft.assetDeliverables.map((asset) => (
+                    <span key={asset} className="pill muted">
+                      {asset}
                     </span>
                   ))}
                   {draft.status === 'draft' ? (
@@ -1129,6 +1165,10 @@ function formatDate(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function buildAssetDeliverables(platforms: Platform[]) {
+  return platforms.map((platform) => `${platform}: returned by creative.bktsai.link`)
 }
 
 export default App
