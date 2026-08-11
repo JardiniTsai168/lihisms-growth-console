@@ -541,6 +541,52 @@ textarea {
   gap: 10px;
 }
 
+.returned-payload,
+.returned-copy,
+.returned-assets {
+  display: grid;
+  gap: 10px;
+}
+
+.returned-payload {
+  padding: 14px;
+  border-radius: 18px;
+  background: color-mix(in oklch, var(--panel-alt) 82%, white 18%);
+  border: 1px solid color-mix(in oklch, var(--line) 86%, transparent 14%);
+}
+
+.returned-copy span {
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  color: rgba(26, 26, 94, 0.78);
+  font-size: 0.82rem;
+}
+
+.returned-assets {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.returned-asset-card {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  text-decoration: none;
+}
+
+.returned-asset-card strong {
+  font-size: 0.84rem;
+}
+
+.returned-asset-card span {
+  color: rgba(26, 26, 94, 0.74);
+  font-size: 0.78rem;
+}
+
 .draft-list,
 .analytics-list,
 .recommendation-grid {

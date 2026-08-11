@@ -1128,6 +1128,35 @@ function App() {
                         ))}
                       </div>
                     </div>
+                    {creative.assetDeliverables.length > 0 || creative.finalCopy ? (
+                      <div className="returned-payload">
+                        <p className="field-label">已回傳內容</p>
+                        {creative.finalCopy ? (
+                          <div className="returned-copy">
+                            <span>Headline: {creative.finalCopy.headline}</span>
+                            <span>Description: {creative.finalCopy.description || 'none'}</span>
+                            <span>URL: {creative.finalCopy.destinationUrl || 'none'}</span>
+                          </div>
+                        ) : null}
+                        {creative.assetDeliverables.length > 0 ? (
+                          <div className="returned-assets">
+                            {creative.assetDeliverables.map((asset) => (
+                              <a
+                                key={`${asset.platform}-${asset.label}-${asset.url}`}
+                                className="returned-asset-card"
+                                href={asset.url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <strong>{asset.platform}</strong>
+                                <span>{asset.label}</span>
+                                <span>{asset.width} × {asset.height}</span>
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </article>
               ))
