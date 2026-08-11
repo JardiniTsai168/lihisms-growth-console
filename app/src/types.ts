@@ -24,6 +24,10 @@ export type CreativeAsset = {
   batchId: string
   angleId: string
   creativeVersion: string
+  stylePreset: string
+  talent: string
+  tone: 'brand' | 'conversion'
+  voiceBalance: number
   headline: string
   kicker: string
   body: string

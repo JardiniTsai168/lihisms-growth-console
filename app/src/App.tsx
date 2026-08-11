@@ -24,6 +24,10 @@ type ReviewResponse = {
   creatives: Array<{
     creativeId: string
     creativeVersion: string
+    stylePreset?: string
+    talent?: string
+    tone?: 'brand' | 'conversion'
+    voiceBalance?: number
     headline: string
     kicker: string
     body: string
@@ -99,6 +103,27 @@ const buildBatchForm = (library: StrategyRecord[]) => {
     productAsset: '',
     additionalNotes: '',
   }
+}
+
+const toneLabelMap = {
+  brand: '品牌向',
+  conversion: '轉單向',
+} as const
+
+function formatStylePreset(stylePreset: string) {
+  return stylePreset
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function formatTalentLabel(talent: string, modelSetting: string) {
+  if (modelSetting.trim()) {
+    return modelSetting
+  }
+
+  return talent || '未提供'
 }
 
 function App() {
@@ -348,6 +373,10 @@ function App() {
         batchId: result.batchId,
         angleId,
         creativeVersion: creative.creativeVersion,
+        stylePreset: creative.stylePreset ?? creative.visualMode,
+        talent: creative.talent ?? 'none',
+        tone: creative.tone ?? (creative.copyMode === '轉單' ? 'conversion' : 'brand'),
+        voiceBalance: creative.voiceBalance ?? Math.max(1, Math.min(5, 6 - creative.emotionalIntensity)),
         headline: creative.headline,
         kicker: creative.kicker,
         body: creative.body,
@@ -1040,25 +1069,20 @@ function App() {
                     <strong>{creative.deliveryNote}</strong>
                     <footer>
                       <span>版本 {creative.creativeVersion}</span>
-                      <span>{creative.visualMode.replaceAll('_', ' ')}</span>
+                      <span>{formatStylePreset(creative.stylePreset)}</span>
                     </footer>
                   </div>
                   <div className="creative-meta">
                     <div className="tag-row">
-                      <span className="tag">{creative.metadata.icp}</span>
-                      <span className="tag">{creative.promptVersion}</span>
+                      <span className="tag">風格 {formatStylePreset(creative.stylePreset)}</span>
+                      <span className="tag">模特兒 {formatTalentLabel(creative.talent, creative.modelSetting)}</span>
+                      <span className="tag">{toneLabelMap[creative.tone]}</span>
+                      <span className="tag">感性 {creative.voiceBalance}/5</span>
                       <span className="tag subtle">1:1 {assetLabelFromUrl(creative.squareAsset)}</span>
                     </div>
                     <div className="creative-return">
-                      <span>Product: {creative.metadata.productName}</span>
-                      <span>Copy mode: {creative.copyMode}</span>
-                      <span>Emotion: {creative.emotionalIntensity}/5</span>
-                      <span>Model: {creative.modelSetting}</span>
-                      <span>Logo: {creative.metadata.logoAsset}</span>
-                      <span>Product: {creative.metadata.productAsset || 'none'}</span>
-                      <span>
-                        Deliverables: {creative.assetDeliverables.length > 0 ? creative.assetDeliverables.length : 'pending'}
-                      </span>
+                      <span>{creative.metadata.productName}</span>
+                      <span>{creative.assetDeliverables.length > 0 ? `已回傳 ${creative.assetDeliverables.length} 個版位` : '等待平台版位'}</span>
                     </div>
                     <div className="review-actions">
                       <button
