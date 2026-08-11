@@ -7,6 +7,7 @@ import type {
   AppState,
   CreativeAsset,
   CreativeBatch,
+  CopyDeliverables,
   DraftAd,
   LibraryKind,
   OptimizationRules,
@@ -47,7 +48,8 @@ type ReviewResponse = {
 
 type FormatsResponse = {
   creativeId: string
-  finalCopy: {
+  copyDeliverables?: CopyDeliverables
+  finalCopy?: {
     primaryText: string
     headline: string
     description: string
@@ -55,7 +57,8 @@ type FormatsResponse = {
   }
   assetDeliverables: Array<{
     platform: string
-    label: string
+    surface: string
+    aspectRatio: string
     url: string
     width: number
     height: number
@@ -72,7 +75,14 @@ const rejectionReasons = [
   '其他',
 ]
 
-const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Google Display', 'LINE']
+const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Threads', 'Google Ads']
+
+const platformIconMap: Record<Platform, string> = {
+  Facebook: 'f',
+  Instagram: '◎',
+  Threads: '@',
+  'Google Ads': 'G',
+}
 
 const usd = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -136,6 +146,28 @@ function getToneLabel(tone?: 'brand' | 'conversion') {
   }
 
   return toneLabelMap[tone]
+}
+
+function getPrimaryCopy(creative: CreativeAsset) {
+  return creative.copyDeliverables?.meta_ad ?? creative.finalCopy
+}
+
+function getDestinationUrl(creative: CreativeAsset) {
+  return (
+    creative.copyDeliverables?.meta_ad?.destinationUrl ||
+    creative.copyDeliverables?.google_ads?.destinationUrl ||
+    creative.finalCopy?.destinationUrl ||
+    creative.metadata.productLink ||
+    'https://lihi.io/products/sms'
+  )
+}
+
+function getPlatformLabel(platform: string) {
+  const normalized = platform.trim()
+  if (normalized === 'IG Reels' || normalized === 'IG Stories') {
+    return normalized
+  }
+  return normalized
 }
 
 function App() {
@@ -401,6 +433,7 @@ function App() {
         emotionalIntensity: creative.emotionalIntensity,
         modelSetting: creative.modelSetting,
         finalCopy: null,
+        copyDeliverables: null,
         assetDeliverables: [],
         metadata: {
           icp: '電商品牌',
@@ -504,6 +537,7 @@ function App() {
       }
 
       const result = (await response.json()) as FormatsResponse
+      const primaryCopy = result.copyDeliverables?.meta_ad ?? result.finalCopy ?? null
 
       setState((current) => ({
         ...current,
@@ -514,7 +548,8 @@ function App() {
                 reviewStatus: 'approved',
                 rejectionReason: null,
                 formatStatus: 'formats_ready',
-                finalCopy: result.finalCopy,
+                finalCopy: primaryCopy,
+                copyDeliverables: result.copyDeliverables ?? null,
                 assetDeliverables: result.assetDeliverables,
               }
             : item,
@@ -542,15 +577,12 @@ function App() {
       campaignName: `lihiSMS | 電商品牌 | ${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? '未命名'}`,
       adsetName: `${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? 'Use Case'} / ${creative.selectedPlatforms.join(', ')}`,
       adName: `${creative.angleId} / ${creative.creativeVersion}`,
-      primaryText: creative.finalCopy?.primaryText ?? creative.body,
-      headline: creative.finalCopy?.headline ?? creative.headline,
+      primaryText: getPrimaryCopy(creative)?.primaryText ?? creative.body,
+      headline: getPrimaryCopy(creative)?.headline ?? creative.headline,
       description:
-        creative.finalCopy?.description ??
+        getPrimaryCopy(creative)?.description ??
         'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
-      destinationUrl:
-        creative.finalCopy?.destinationUrl ||
-        creative.metadata.productLink ||
-        'https://lihi.io/products/sms',
+      destinationUrl: getDestinationUrl(creative),
       assetDeliverables: buildAssetDeliverables(creative),
       metadata: {
         icp: creative.metadata.icp,
@@ -1041,6 +1073,7 @@ function App() {
                     }
                     onClick={() => toggleBatchPlatform(platform)}
                   >
+                    <span className="platform-pill-icon" aria-hidden="true">{platformIconMap[platform]}</span>
                     {platform}
                   </button>
                 ))}
@@ -1128,28 +1161,38 @@ function App() {
                         ))}
                       </div>
                     </div>
-                    {creative.assetDeliverables.length > 0 || creative.finalCopy ? (
+                    {creative.assetDeliverables.length > 0 || creative.copyDeliverables || creative.finalCopy ? (
                       <div className="returned-payload">
                         <p className="field-label">已回傳內容</p>
-                        {creative.finalCopy ? (
+                        {creative.copyDeliverables?.meta_ad ? (
                           <div className="returned-copy">
-                            <span>Headline: {creative.finalCopy.headline}</span>
-                            <span>Description: {creative.finalCopy.description || 'none'}</span>
-                            <span>URL: {creative.finalCopy.destinationUrl || 'none'}</span>
+                            <span>Meta primary text: {creative.copyDeliverables.meta_ad.primaryText}</span>
+                            <span>Meta headline: {creative.copyDeliverables.meta_ad.headline}</span>
+                            <span>Meta description: {creative.copyDeliverables.meta_ad.description || 'none'}</span>
+                            <span>Meta URL: {creative.copyDeliverables.meta_ad.destinationUrl || 'none'}</span>
+                          </div>
+                        ) : null}
+                        {creative.copyDeliverables?.google_ads ? (
+                          <div className="returned-copy">
+                            <span>Google headlines: {creative.copyDeliverables.google_ads.headline}</span>
+                            <span>Google descriptions: {creative.copyDeliverables.google_ads.description}</span>
+                            <span>Google paths: {creative.copyDeliverables.google_ads.path1} / {creative.copyDeliverables.google_ads.path2}</span>
+                            <span>Google URL: {creative.copyDeliverables.google_ads.destinationUrl || 'none'}</span>
                           </div>
                         ) : null}
                         {creative.assetDeliverables.length > 0 ? (
                           <div className="returned-assets">
                             {creative.assetDeliverables.map((asset) => (
                               <a
-                                key={`${asset.platform}-${asset.label}-${asset.url}`}
+                                key={`${asset.platform}-${asset.surface}-${asset.aspectRatio}-${asset.url}`}
                                 className="returned-asset-card"
                                 href={asset.url}
                                 target="_blank"
                                 rel="noreferrer"
                               >
-                                <strong>{asset.platform}</strong>
-                                <span>{asset.label}</span>
+                                <strong>{getPlatformLabel(asset.platform)}</strong>
+                                <span>{asset.surface}</span>
+                                <span>{asset.aspectRatio}</span>
                                 <span>{asset.width} × {asset.height}</span>
                               </a>
                             ))}
@@ -1403,7 +1446,7 @@ function formatDate(value: string) {
 function buildAssetDeliverables(creative: CreativeAsset) {
   if (creative.assetDeliverables.length > 0) {
     return creative.assetDeliverables.map((asset) => {
-      return `${asset.platform}: ${asset.label} ${asset.width}x${asset.height}`
+      return `${asset.platform}: ${asset.surface} ${asset.aspectRatio} ${asset.width}x${asset.height}`
     })
   }
 

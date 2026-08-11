@@ -4,7 +4,23 @@ export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
 export type DraftStatus = 'draft' | 'published'
 
-export type Platform = 'Facebook' | 'Instagram' | 'Google Display' | 'LINE'
+export type Platform = 'Facebook' | 'Instagram' | 'Threads' | 'Google Ads'
+
+export type CopyDeliverables = {
+  meta_ad?: {
+    primaryText: string
+    headline: string
+    description: string
+    destinationUrl: string
+  }
+  google_ads?: {
+    headline: string
+    description: string
+    path1: string
+    path2: string
+    destinationUrl: string
+  }
+}
 
 export type StrategyRecord = {
   id: string
@@ -45,9 +61,11 @@ export type CreativeAsset = {
     description: string
     destinationUrl: string
   } | null
+  copyDeliverables: CopyDeliverables | null
   assetDeliverables: Array<{
     platform: string
-    label: string
+    surface: string
+    aspectRatio: string
     url: string
     width: number
     height: number
