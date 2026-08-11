@@ -16,7 +16,7 @@ import type {
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
-const STORAGE_KEY = 'lihisms-growth-console-v6'
+const STORAGE_KEY = 'lihisms-growth-console-v7'
 const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
 
 type ReviewResponse = {
@@ -396,7 +396,7 @@ function App() {
       }
 
       const result = (await response.json()) as ReviewResponse
-      const creativeIds = result.creatives.map((creative) => creative.creativeId)
+      const creativeIds = result.creatives.map((creative) => `${result.batchId}:${creative.creativeId}`)
       const batch: CreativeBatch = {
         id: result.batchId,
         useCaseId: useCase.id,
@@ -413,7 +413,8 @@ function App() {
       }
 
       const creatives: CreativeAsset[] = result.creatives.map((creative) => ({
-        id: creative.creativeId,
+        id: `${result.batchId}:${creative.creativeId}`,
+        sourceCreativeId: creative.creativeId,
         batchId: result.batchId,
         angleId,
         creativeVersion: creative.creativeVersion,
@@ -527,7 +528,7 @@ function App() {
         },
         body: JSON.stringify({
           batchId: creative.batchId,
-          creativeId,
+          creativeId: creative.sourceCreativeId,
           selectedPlatforms: creative.selectedPlatforms,
         }),
       })

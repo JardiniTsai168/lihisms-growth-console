@@ -37,6 +37,7 @@ export type StrategyRecord = {
 
 export type CreativeAsset = {
   id: string
+  sourceCreativeId: string
   batchId: string
   angleId: string
   creativeVersion: string
