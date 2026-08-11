@@ -184,6 +184,7 @@ function App() {
   const [batchStatusMessage, setBatchStatusMessage] = useState<string | null>(null)
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false)
   const [approvingCreativeId, setApprovingCreativeId] = useState<string | null>(null)
+  const [isApprovingBatch, setIsApprovingBatch] = useState(false)
 
   const activeLibrary = state.library.filter((record) => record.status === 'active')
   const latestBatch = state.batches[0]
@@ -234,6 +235,9 @@ function App() {
 
   const selectedBatchPlatforms = Array.from(
     new Set(batchCreatives.flatMap((creative) => creative.selectedPlatforms)),
+  )
+  const pendingBatchCreatives = batchCreatives.filter(
+    (creative) => creative.selectedPlatforms.length > 0 && creative.assetDeliverables.length === 0,
   )
 
   useEffect(() => {
@@ -510,6 +514,47 @@ function App() {
     }))
   }
 
+  const requestFormatsForCreative = async (creative: CreativeAsset) => {
+    const response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        batchId: creative.batchId,
+        creativeId: creative.sourceCreativeId,
+        selectedPlatforms: creative.selectedPlatforms,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response))
+    }
+
+    return (await response.json()) as FormatsResponse
+  }
+
+  const applyFormatsResult = (creativeId: string, result: FormatsResponse) => {
+    const primaryCopy = result.copyDeliverables?.meta_ad ?? result.finalCopy ?? null
+
+    setState((current) => ({
+      ...current,
+      creatives: current.creatives.map((item) =>
+        item.id === creativeId
+          ? {
+              ...item,
+              reviewStatus: 'approved',
+              rejectionReason: null,
+              formatStatus: 'formats_ready',
+              finalCopy: primaryCopy,
+              copyDeliverables: result.copyDeliverables ?? null,
+              assetDeliverables: result.assetDeliverables,
+            }
+          : item,
+      ),
+    }))
+  }
+
   const approveCreative = async (creativeId: string) => {
     const creative = state.creatives.find((item) => item.id === creativeId)
     if (!creative || creative.selectedPlatforms.length === 0) {
@@ -521,45 +566,39 @@ function App() {
     setApprovingCreativeId(creativeId)
 
     try {
-      const response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          batchId: creative.batchId,
-          creativeId: creative.sourceCreativeId,
-          selectedPlatforms: creative.selectedPlatforms,
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response))
-      }
-
-      const result = (await response.json()) as FormatsResponse
-      const primaryCopy = result.copyDeliverables?.meta_ad ?? result.finalCopy ?? null
-
-      setState((current) => ({
-        ...current,
-        creatives: current.creatives.map((item) =>
-          item.id === creativeId
-            ? {
-                ...item,
-                reviewStatus: 'approved',
-                rejectionReason: null,
-                formatStatus: 'formats_ready',
-                finalCopy: primaryCopy,
-                copyDeliverables: result.copyDeliverables ?? null,
-                assetDeliverables: result.assetDeliverables,
-              }
-            : item,
-        ),
-      }))
+      const result = await requestFormatsForCreative(creative)
+      applyFormatsResult(creativeId, result)
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '版位生成失敗。')
     } finally {
       setApprovingCreativeId(null)
+    }
+  }
+
+  const approveBatchCreatives = async () => {
+    if (pendingBatchCreatives.length === 0) {
+      setRequestError('請先選至少 1 個平台，再按 Approve all。')
+      return
+    }
+
+    setRequestError(null)
+    setIsApprovingBatch(true)
+
+    try {
+      const results = await Promise.all(
+        pendingBatchCreatives.map(async (creative) => ({
+          creativeId: creative.id,
+          result: await requestFormatsForCreative(creative),
+        })),
+      )
+
+      for (const entry of results) {
+        applyFormatsResult(entry.creativeId, entry.result)
+      }
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : '整批版位生成失敗。')
+    } finally {
+      setIsApprovingBatch(false)
     }
   }
 
@@ -1084,6 +1123,14 @@ function App() {
                   ? `已選平台：${selectedBatchPlatforms.join(', ')}，下面每張素材按 Approved 都會用同一組平台。`
                   : '先選至少 1 個平台，下面每張素材都會共用這組平台。'}
               </p>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={isApprovingBatch || pendingBatchCreatives.length === 0}
+                onClick={approveBatchCreatives}
+              >
+                {isApprovingBatch ? `Approving ${pendingBatchCreatives.length} creatives…` : `Approve all ${pendingBatchCreatives.length} creatives`}
+              </button>
             </div>
           ) : null}
 
@@ -1134,7 +1181,7 @@ function App() {
                       <button
                         type="button"
                         className={creative.reviewStatus === 'approved' ? 'mini-button success' : 'mini-button'}
-                        disabled={approvingCreativeId === creative.id}
+                        disabled={approvingCreativeId === creative.id || isApprovingBatch}
                         onClick={() => approveCreative(creative.id)}
                       >
                         {approvingCreativeId === creative.id ? 'Approving…' : 'Approved'}
