@@ -138,11 +138,6 @@ function App() {
     )
   })
 
-  const latestBatchLooksStub = batchCreatives.length > 0 && batchCreatives.every((creative) => {
-    const stubSignal = `${creative.deliveryNote} ${creative.body} ${creative.squareAsset}`.toLowerCase()
-    return stubSignal.includes('stub') || stubSignal.includes('/assets/creative_00')
-  })
-
   const funnelTotals = useMemo(() => {
     return state.metrics.reduce(
       (totals, metric) => ({
@@ -166,6 +161,10 @@ function App() {
   const recommendations = useMemo(
     () => buildRecommendations(state.drafts, state.metrics, state.rules),
     [state.drafts, state.metrics, state.rules],
+  )
+
+  const selectedBatchPlatforms = Array.from(
+    new Set(batchCreatives.flatMap((creative) => creative.selectedPlatforms)),
   )
 
   useEffect(() => {
@@ -408,11 +407,15 @@ function App() {
     }))
   }
 
-  const toggleCreativePlatform = (creativeId: string, platform: Platform) => {
+  const toggleBatchPlatform = (platform: Platform) => {
+    if (!latestBatch) {
+      return
+    }
+
     setState((current) => ({
       ...current,
       creatives: current.creatives.map((creative) => {
-        if (creative.id !== creativeId) {
+        if (!latestBatch.creativeIds.includes(creative.id)) {
           return creative
         }
 
@@ -836,31 +839,6 @@ function App() {
             <span className="pill active">creative.bktsai.link live bridge</span>
           </div>
 
-          <div className="builder-flow">
-            <span>Stage 1: send product + use case + benefits + assets</span>
-            <span>Random style / copy mode / emotion 1-5</span>
-            <span>Return copy + 1:1 creative first</span>
-            <span>Stage 2: Approved 後依平台回傳正確尺寸</span>
-          </div>
-
-          <div className="api-spec-grid">
-            <article className="api-spec-card">
-              <p className="eyebrow">Stage 1 / Request</p>
-              <h3>Send to creative.bktsai.link</h3>
-              <p>產品名稱、use case、3-5 benefits、product link、logo、product image、補充內容。</p>
-            </article>
-            <article className="api-spec-card">
-              <p className="eyebrow">Stage 1 / Response</p>
-              <h3>Review Payload</h3>
-              <p>回傳文案、1:1 素材、creative ids，讓使用者先做人審與平台勾選。</p>
-            </article>
-            <article className="api-spec-card">
-              <p className="eyebrow">Stage 2 / Approved</p>
-              <h3>Platform-based Return</h3>
-              <p>送出 approved creative 與勾選平台，creative.bktsai.link 自動回傳該平台正確尺寸與最終文案。</p>
-            </article>
-          </div>
-
           <div className="builder-grid">
             <label>
               Use case
@@ -1004,13 +982,34 @@ function App() {
               <p className="eyebrow">03 / Review + platform approval</p>
               <h2>人工審核、平台選擇、回傳剩餘版型</h2>
             </div>
-            <span className="pill muted">先選平台，再按 Approved</span>
+            <span className="pill muted">平台整批共用</span>
           </div>
 
-          {latestBatchLooksStub ? (
-            <p className="helper-copy warning-banner">
-              目前後端回來的仍是 stub 素材與 stub 文案，代表前端已串上 live endpoint，但 creative.bktsai.link 尚未切到真生成流程。
-            </p>
+          {batchCreatives.length > 0 ? (
+            <div className="batch-platform-picker">
+              <span className="field-label">Platforms</span>
+              <div className="platform-grid">
+                {platformOptions.map((platform) => (
+                  <button
+                    key={platform}
+                    type="button"
+                    className={
+                      selectedBatchPlatforms.includes(platform)
+                        ? 'reason-chip active'
+                        : 'reason-chip'
+                    }
+                    onClick={() => toggleBatchPlatform(platform)}
+                  >
+                    {platform}
+                  </button>
+                ))}
+              </div>
+              <p className="helper-copy">
+                {selectedBatchPlatforms.length > 0
+                  ? `已選平台：${selectedBatchPlatforms.join(', ')}，下面每張素材按 Approved 都會用同一組平台。`
+                  : '先選至少 1 個平台，下面每張素材都會共用這組平台。'}
+              </p>
+            </div>
           ) : null}
 
           <div className="creative-grid">
@@ -1060,25 +1059,6 @@ function App() {
                       <span>
                         Deliverables: {creative.assetDeliverables.length > 0 ? creative.assetDeliverables.length : 'pending'}
                       </span>
-                    </div>
-                    <div>
-                      <span className="field-label">Platforms</span>
-                      <div className="platform-grid">
-                        {platformOptions.map((platform) => (
-                          <button
-                            key={platform}
-                            type="button"
-                            className={
-                              creative.selectedPlatforms.includes(platform)
-                                ? 'reason-chip active'
-                                : 'reason-chip'
-                            }
-                            onClick={() => toggleCreativePlatform(creative.id, platform)}
-                          >
-                            {platform}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                     <div className="review-actions">
                       <button

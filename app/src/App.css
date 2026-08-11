@@ -507,6 +507,12 @@ textarea {
   padding: 0 4px;
 }
 
+.batch-platform-picker {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
 .creative-return {
   gap: 8px;
 }
