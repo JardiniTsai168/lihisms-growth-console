@@ -15,7 +15,7 @@ import type {
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
-const STORAGE_KEY = 'lihisms-growth-console-v5'
+const STORAGE_KEY = 'lihisms-growth-console-v6'
 const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
 
 type ReviewResponse = {
@@ -110,7 +110,11 @@ const toneLabelMap = {
   conversion: '轉單向',
 } as const
 
-function formatStylePreset(stylePreset: string) {
+function formatStylePreset(stylePreset?: string) {
+  if (!stylePreset?.trim()) {
+    return '未指定風格'
+  }
+
   return stylePreset
     .split('_')
     .filter(Boolean)
@@ -118,12 +122,20 @@ function formatStylePreset(stylePreset: string) {
     .join(' ')
 }
 
-function formatTalentLabel(talent: string, modelSetting: string) {
-  if (modelSetting.trim()) {
+function formatTalentLabel(talent?: string, modelSetting?: string) {
+  if (modelSetting?.trim()) {
     return modelSetting
   }
 
   return talent || '未提供'
+}
+
+function getToneLabel(tone?: 'brand' | 'conversion') {
+  if (!tone) {
+    return '未指定方向'
+  }
+
+  return toneLabelMap[tone]
 }
 
 function App() {
@@ -1076,7 +1088,7 @@ function App() {
                     <div className="tag-row">
                       <span className="tag">風格 {formatStylePreset(creative.stylePreset)}</span>
                       <span className="tag">模特兒 {formatTalentLabel(creative.talent, creative.modelSetting)}</span>
-                      <span className="tag">{toneLabelMap[creative.tone]}</span>
+                      <span className="tag">{getToneLabel(creative.tone)}</span>
                       <span className="tag">感性 {creative.voiceBalance}/5</span>
                       <span className="tag subtle">1:1 {assetLabelFromUrl(creative.squareAsset)}</span>
                     </div>
