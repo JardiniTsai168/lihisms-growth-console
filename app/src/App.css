@@ -424,7 +424,11 @@ textarea {
   display: grid;
   align-content: space-between;
   gap: 20px;
-  color: white;
+  color: var(--brand-deep);
+  background:
+    linear-gradient(150deg, rgba(255, 245, 248, 0.98), rgba(244, 228, 236, 0.95)),
+    linear-gradient(180deg, #fff8fb, #f3e6ed);
+  border: 1px solid color-mix(in oklch, var(--line) 82%, transparent 18%);
   position: relative;
   overflow: clip;
 }
@@ -451,6 +455,14 @@ textarea {
     linear-gradient(180deg, #ff6b9d, #cf4879);
 }
 
+.mode-clean-product .creative-poster,
+.mode-clean-product-v2 .creative-poster {
+  background:
+    linear-gradient(155deg, rgba(255, 245, 248, 0.98), rgba(241, 228, 235, 0.96)),
+    linear-gradient(180deg, #fff9fb, #f4e8ee);
+  color: var(--brand-deep);
+}
+
 .mode-promo-burst .creative-poster {
   color: var(--ink);
   background:
@@ -475,6 +487,12 @@ textarea {
 
 .creative-poster p {
   margin: 0;
+}
+
+.creative-poster strong,
+.creative-poster footer,
+.creative-poster .poster-kicker {
+  color: inherit;
 }
 
 .creative-poster footer {

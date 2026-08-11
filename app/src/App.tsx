@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { initialState, standardTagBank } from './seed'
 import { buildRecommendations } from './recommendations'
@@ -104,6 +104,7 @@ const buildBatchForm = (library: StrategyRecord[]) => {
 function App() {
   const logoUrl = `${import.meta.env.BASE_URL}lihi-logo-primary.png`
   const [state, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
+  const reviewSectionRef = useRef<HTMLElement | null>(null)
   const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(buildEmptyForm)
@@ -166,6 +167,17 @@ function App() {
     () => buildRecommendations(state.drafts, state.metrics, state.rules),
     [state.drafts, state.metrics, state.rules],
   )
+
+  useEffect(() => {
+    if (!isGeneratingBatch && batchCreatives.length === 0) {
+      return
+    }
+
+    reviewSectionRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+  }, [batchCreatives.length, isGeneratingBatch])
 
   const handleSaveRecord = () => {
     if (!form.title.trim() || !form.summary.trim()) {
@@ -979,15 +991,14 @@ function App() {
 
           {latestBatch ? (
             <div className="metadata-strip">
-              <span>angle_id: {latestBatch.angleId}</span>
-              <span>prompt_version: {latestBatch.promptVersion}</span>
-              <span>route: creative.bktsai.link</span>
-              <span>created_at: {formatDate(latestBatch.createdAt)}</span>
+              <span>批次：{latestBatch.id}</span>
+              <span>版本：{latestBatch.promptVersion}</span>
+              <span>建立時間：{formatDate(latestBatch.createdAt)}</span>
             </div>
           ) : null}
         </section>
 
-        <section className="panel span-two">
+        <section ref={reviewSectionRef} className="panel span-two">
           <div className="panel-header">
             <div>
               <p className="eyebrow">03 / Review + platform approval</p>
@@ -1029,8 +1040,8 @@ function App() {
                     <p>{creative.body}</p>
                     <strong>{creative.deliveryNote}</strong>
                     <footer>
-                      <span>{creative.angleId}</span>
-                      <span>{creative.creativeVersion}</span>
+                      <span>版本 {creative.creativeVersion}</span>
+                      <span>{creative.visualMode.replaceAll('_', ' ')}</span>
                     </footer>
                   </div>
                   <div className="creative-meta">
