@@ -6,6 +6,8 @@ import type {
   AdAngleFamily,
   AnalyticsMetric,
   AdsMcpGatewayConfig,
+  AdsMcpGatewayRequest,
+  AdsMcpGatewayResponse,
   AppState,
   AudienceType,
   BudgetStrategy,
@@ -86,6 +88,11 @@ type AdsMcpPublishResult = {
   externalCampaignId: string
   externalAdSetId: string
   externalAdId: string
+}
+
+type AdsGatewayContractPreview = {
+  request: AdsMcpGatewayRequest
+  response: AdsMcpGatewayResponse
 }
 
 const rejectionReasons = [
@@ -380,6 +387,27 @@ function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
     pixelId: 'pixel_lihisms_demo',
     authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
     lastValidatedAt: null,
+  }
+}
+
+function buildAdsMcpGatewayRequest(payload: AdsMcpPayloadPreview): AdsMcpGatewayRequest {
+  return {
+    server: META_ADS_MCP_SERVER,
+    operation: payload.operation,
+    payload,
+  }
+}
+
+function buildAdsGatewayContractPreview(payload: AdsMcpPayloadPreview): AdsGatewayContractPreview {
+  return {
+    request: buildAdsMcpGatewayRequest(payload),
+    response: {
+      requestId: 'req_demo_123456',
+      campaignId: 'cmp_abc123',
+      adSetId: 'adset_def456',
+      adId: 'ad_xyz789',
+      status: 'accepted',
+    },
   }
 }
 
@@ -765,10 +793,7 @@ async function executeAdsMcpPublish(
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      server: META_ADS_MCP_SERVER,
-      payload,
-    }),
+    body: JSON.stringify(buildAdsMcpGatewayRequest(payload)),
   })
   const responseBody = await response.text()
 
@@ -776,7 +801,7 @@ async function executeAdsMcpPublish(
     throw new Error(responseBody || `Ads MCP publish failed with ${response.status}`)
   }
 
-  const parsed = safeJsonParse<Record<string, string>>(responseBody)
+  const parsed = safeJsonParse<AdsMcpGatewayResponse>(responseBody)
 
   return {
     requestId: parsed?.requestId ?? requestId,
@@ -872,6 +897,9 @@ function App() {
   const publishableDrafts = state.drafts.filter(
     (draft) => draft.status === 'ready_to_publish' || draft.status === 'publishing',
   )
+  const gatewayContractPreview = publishableDrafts[0]
+    ? buildAdsGatewayContractPreview(publishableDrafts[0].publishBundle.adsMcpPayload)
+    : null
   const metaBundleCreatives = useMemo(() => {
     return batchCreatives
       .filter((creative) => creative.reviewStatus === 'approved')
@@ -2459,6 +2487,43 @@ function App() {
           </div>
 
           {publishStatusMessage ? <div className="status-banner">{publishStatusMessage}</div> : null}
+
+          <div className="api-spec-grid">
+            <article className="api-spec-card">
+              <h3>Remote gateway contract</h3>
+              <p>POST 你的 gateway endpoint，body 必須吃 `server + operation + payload`。</p>
+            </article>
+            <article className="api-spec-card">
+              <h3>Required response</h3>
+              <p>回 `requestId`、`campaignId`、`adSetId`、`adId`，前端才會回寫 published。</p>
+            </article>
+            <article className="api-spec-card">
+              <h3>Failure behavior</h3>
+              <p>非 2xx 或 JSON 不完整時，draft 會進 `failed`，並保留錯誤訊息。</p>
+            </article>
+          </div>
+
+          {gatewayContractPreview ? (
+            <div className="gateway-contract-grid">
+              <article>
+                <p className="eyebrow">request</p>
+                <pre className="payload-preview">
+                  {JSON.stringify(gatewayContractPreview.request, null, 2)}
+                </pre>
+              </article>
+              <article>
+                <p className="eyebrow">expected response</p>
+                <pre className="payload-preview">
+                  {JSON.stringify(gatewayContractPreview.response, null, 2)}
+                </pre>
+              </article>
+            </div>
+          ) : (
+            <article className="creative-empty-state">
+              <h3>還沒有 contract sample</h3>
+              <p>先把 draft prepare 成 ready_to_publish，這裡就會自動帶出 gateway request sample。</p>
+            </article>
+          )}
         </section>
 
         <section className="panel span-two">

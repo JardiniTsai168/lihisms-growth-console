@@ -57,6 +57,20 @@ export type AdsMcpSubmission = {
   externalAdId: string | null
 }
 
+export type AdsMcpGatewayRequest = {
+  server: 'https://mcp.facebook.com/ads'
+  operation: 'upsert_campaign_bundle'
+  payload: AdsMcpPayloadPreview
+}
+
+export type AdsMcpGatewayResponse = {
+  requestId: string
+  campaignId: string
+  adSetId: string
+  adId: string
+  status: 'accepted' | 'published'
+}
+
 export type PublishAssetSelection = {
   platform: string
   surface: string

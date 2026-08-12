@@ -1,32 +1,115 @@
-# React + TypeScript + Vite
+# lihiSMS Growth Console
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+這個前端是 `lihiSMS` 的素材到投放模擬台，流程目前是：
 
-Currently, two official plugins are available:
+1. 建 use case / benefit library
+2. 呼叫 `creative.bktsai.link` 產 review creatives
+3. 選平台並 approve，拿回 copy 與 asset deliverables
+4. 建 draft ads
+5. 準備 publish bundle
+6. 透過 Ads MCP gateway 送出 publish request
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 本地開發
 
-## React Compiler
+```bash
+npm install
+npm run dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Production build:
 
-## Expanding the Oxlint configuration
+```bash
+npm run build
+```
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Ads MCP Publish Gateway
+
+前端支援兩種模式：
+
+- `demo`
+  - 不打遠端 API
+  - 前端直接模擬成功 response，方便驗證 UI flow
+- `remote`
+  - 對你指定的 `endpointUrl` 發 `POST`
+  - backend 需代送到 Meta Ads MCP 或你的中介服務
+
+### Request contract
+
+Remote mode 送出的 request body：
 
 ```json
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+  "server": "https://mcp.facebook.com/ads",
+  "operation": "upsert_campaign_bundle",
+  "payload": {
+    "server": "meta_ads_mcp",
+    "version": "draft_v1",
+    "operation": "upsert_campaign_bundle",
+    "connection": {
+      "endpoint": "https://your-gateway.example.com/ads-mcp",
+      "mode": "remote",
+      "adAccountId": "act_1234567890",
+      "pixelId": "pixel_lihisms_demo"
+    },
+    "campaign": {
+      "name": "lihiSMS | Prospecting | Conversions",
+      "objective": "conversions",
+      "buyingType": "auction",
+      "status": "paused"
+    },
+    "adSet": {
+      "name": "P01 | Broad | TW | 25-45",
+      "optimizationGoal": "landing_page_views",
+      "budgetStrategy": "lowest_cost",
+      "placementStrategy": "advantage_plus",
+      "audience": {
+        "type": "broad",
+        "geo": "TW",
+        "ageRange": "25-45",
+        "windowDays": null
+      }
+    },
+    "creative": {
+      "name": "A01 | Benefit_trackable | Brand | v1",
+      "primaryText": "example primary text",
+      "headline": "example headline",
+      "description": "example description",
+      "destinationUrl": "https://lihi.io/products/sms",
+      "assetUrls": ["https://cdn.example.com/ad-1x1.png"],
+      "selectedPlatforms": ["Facebook", "Instagram"]
+    },
+    "ad": {
+      "name": "A01 | Benefit_trackable | Brand | v1",
+      "reviewState": "publishing"
+    }
   }
 }
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+### Expected response
+
+backend 需回 2xx，且 body 至少包含：
+
+```json
+{
+  "requestId": "req_demo_123456",
+  "campaignId": "cmp_abc123",
+  "adSetId": "adset_def456",
+  "adId": "ad_xyz789",
+  "status": "accepted"
+}
+```
+
+### 前端行為
+
+- 2xx + 完整 JSON：draft 進 `published`
+- 非 2xx：draft 進 `failed`
+- 缺少必要欄位或 response 不是合法 JSON：draft 也會進 `failed`
+
+## 建議下一步
+
+如果要接真實 backend，建議下一段做：
+
+1. backend 驗證 `adAccountId` / `pixelId`
+2. backend 建 campaign / ad set / ad creative 的 idempotency strategy
+3. backend 回傳更完整的 Meta trace / error payload
