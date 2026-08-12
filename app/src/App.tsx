@@ -17,6 +17,9 @@ import type {
   LibraryKind,
   OptimizationGoal,
   PlacementStrategy,
+  AdsMcpPayloadPreview,
+  PublishAssetSelection,
+  PublishBundle,
   OptimizationRules,
   Platform,
   StrategyRecord,
@@ -324,6 +327,151 @@ function buildAdsPlan(creative: CreativeAsset): DraftAd['adsPlan'] {
   }
 }
 
+function buildPublishChecklist(bundle: {
+  copyPayload: PublishBundle['copyPayload']
+  assetSelections: PublishAssetSelection[]
+}): PublishBundle['checklist'] {
+  const hasCopy =
+    Boolean(bundle.copyPayload.primaryText.trim()) && Boolean(bundle.copyPayload.headline.trim())
+  const hasDestinationUrl = Boolean(bundle.copyPayload.destinationUrl.trim())
+  const selectedAssets = bundle.assetSelections.filter((asset) => asset.selected)
+
+  return {
+    hasCopy,
+    hasDestinationUrl,
+    hasSelectedAssets: selectedAssets.length > 0,
+    hasMetaAsset: selectedAssets.some((asset) => isMetaPlatform(asset.platform)),
+  }
+}
+
+function buildAdsMcpPayloadPreview(bundle: {
+  campaignPayload: PublishBundle['campaignPayload']
+  adSetPayload: PublishBundle['adSetPayload']
+  adPayload: PublishBundle['adPayload']
+  copyPayload: PublishBundle['copyPayload']
+  assetSelections: PublishAssetSelection[]
+  status: DraftAd['status']
+}): AdsMcpPayloadPreview {
+  return {
+    server: 'meta_ads_mcp',
+    version: 'draft_v1',
+    campaign: {
+      name: bundle.campaignPayload.name,
+      objective: bundle.campaignPayload.objective,
+      buyingType: bundle.campaignPayload.buyingType,
+      status: 'paused',
+    },
+    adSet: {
+      name: bundle.adSetPayload.name,
+      optimizationGoal: bundle.adSetPayload.optimizationGoal,
+      budgetStrategy: bundle.adSetPayload.budgetStrategy,
+      placementStrategy: bundle.adSetPayload.placementStrategy,
+      audience: {
+        type: bundle.adSetPayload.audienceType,
+        geo: bundle.adSetPayload.geo,
+        ageRange: bundle.adSetPayload.ageRange,
+        windowDays: bundle.adSetPayload.audienceWindowDays,
+      },
+    },
+    creative: {
+      name: bundle.adPayload.name,
+      primaryText: bundle.copyPayload.primaryText,
+      headline: bundle.copyPayload.headline,
+      description: bundle.copyPayload.description,
+      destinationUrl: bundle.copyPayload.destinationUrl,
+      assetUrls: bundle.assetSelections.filter((asset) => asset.selected).map((asset) => asset.url),
+      selectedPlatforms: bundle.adPayload.selectedPlatforms,
+    },
+    ad: {
+      name: bundle.adPayload.name,
+      reviewState: bundle.status,
+    },
+  }
+}
+
+function buildPublishBundle(creative: CreativeAsset, adsPlan: DraftAd['adsPlan']): PublishBundle {
+  const copyPayload = {
+    primaryText: getPrimaryCopy(creative)?.primaryText ?? creative.body,
+    headline: getPrimaryCopy(creative)?.headline ?? creative.headline,
+    description:
+      getPrimaryCopy(creative)?.description ??
+      'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
+    destinationUrl: getDestinationUrl(creative),
+  }
+
+  const assetSelections: PublishAssetSelection[] =
+    creative.assetDeliverables.length > 0
+      ? creative.assetDeliverables.map((asset) => ({
+          platform: asset.platform,
+          surface: asset.surface,
+          aspectRatio: asset.aspectRatio,
+          url: asset.url,
+          width: asset.width,
+          height: asset.height,
+          mimeType: asset.mimeType,
+          label: `${asset.platform} · ${asset.surface} · ${asset.aspectRatio}`,
+          priority: isMetaPlatform(asset.platform) ? 'meta_primary' : 'secondary',
+          selected: isMetaPlatform(asset.platform),
+        }))
+      : creative.selectedPlatforms.map((platform) => ({
+          platform,
+          surface: 'returned by creative.bktsai.link',
+          aspectRatio: 'pending',
+          url: '',
+          width: null,
+          height: null,
+          mimeType: null,
+          label: `${platform} · pending asset`,
+          priority: isMetaPlatform(platform) ? 'meta_primary' : 'secondary',
+          selected: isMetaPlatform(platform),
+        }))
+
+  const campaignPayload = {
+    name: adsPlan.campaign.campaignName,
+    objective: adsPlan.campaign.objective,
+    funnelStage: adsPlan.campaign.funnelStage,
+    market: adsPlan.campaign.market,
+    buyingType: 'auction' as const,
+  }
+  const adSetPayload = {
+    name: adsPlan.adSet.adsetName,
+    audienceType: adsPlan.adSet.audienceType,
+    audienceWindowDays: adsPlan.adSet.audienceWindowDays,
+    budgetStrategy: adsPlan.adSet.budgetStrategy,
+    optimizationGoal: adsPlan.adSet.optimizationGoal,
+    placementStrategy: adsPlan.adSet.placementStrategy,
+    geo: adsPlan.adSet.geo,
+    ageRange: adsPlan.adSet.ageRange,
+  }
+  const adPayload = {
+    name: adsPlan.ad.adName,
+    angleFamily: adsPlan.ad.angleFamily,
+    angleLabel: adsPlan.ad.angleLabel,
+    copyMode: adsPlan.ad.copyMode,
+    selectedPlatforms: creative.selectedPlatforms,
+  }
+  const checklist = buildPublishChecklist({ copyPayload, assetSelections })
+
+  return {
+    campaignPayload,
+    adSetPayload,
+    adPayload,
+    copyPayload,
+    assetSelections,
+    adsMcpPayload: buildAdsMcpPayloadPreview({
+      campaignPayload,
+      adSetPayload,
+      adPayload,
+      copyPayload,
+      assetSelections,
+      status: 'draft',
+    }),
+    checklist,
+    lastError: null,
+    preparedAt: null,
+  }
+}
+
 function buildLegacyDraftAdsPlan(
   draft: Pick<DraftAd, 'campaignName' | 'adsetName' | 'adName' | 'metadata'>,
 ): DraftAd['adsPlan'] {
@@ -355,7 +503,10 @@ function buildLegacyDraftAdsPlan(
     ad: {
       angleFamily: draft.metadata.useCaseId.startsWith('use-') ? 'use_case' : 'benefit',
       angleLabel: draft.metadata.angleId,
-      copyMode: draft.adName.includes('Brand') ? '品牌' : '轉單',
+      copyMode:
+        draft.adName.includes('Brand') || draft.campaignName.includes('Brand')
+          ? '品牌'
+          : '轉單',
       adName: draft.adName,
     },
   }
@@ -365,15 +516,106 @@ function migrateAppState(state: AppState) {
   let changed = false
 
   const drafts = state.drafts.map((draft) => {
-    if (draft.adsPlan) {
-      return draft
+    const nextDraft: DraftAd = { ...draft } as DraftAd
+
+    if (!nextDraft.adsPlan) {
+      changed = true
+      nextDraft.adsPlan = buildLegacyDraftAdsPlan(draft)
     }
 
-    changed = true
-    return {
-      ...draft,
-      adsPlan: buildLegacyDraftAdsPlan(draft),
+    if (!nextDraft.publishBundle) {
+      changed = true
+      const assetSelections: PublishAssetSelection[] = nextDraft.assetDeliverables.map((asset) => ({
+        platform: asset.split(':')[0] ?? 'Facebook',
+        surface: asset.includes(':') ? asset.split(':').slice(1).join(':').trim() : asset,
+        aspectRatio: 'unknown',
+        url: '',
+        width: null,
+        height: null,
+        mimeType: null,
+        label: asset,
+        priority: asset.includes('Facebook') || asset.includes('Instagram') ? 'meta_primary' : 'secondary',
+        selected: asset.includes('Facebook') || asset.includes('Instagram'),
+      }))
+      const copyPayload = {
+        primaryText: nextDraft.primaryText,
+        headline: nextDraft.headline,
+        description: nextDraft.description,
+        destinationUrl: nextDraft.destinationUrl,
+      }
+      nextDraft.publishBundle = {
+        campaignPayload: {
+          name: nextDraft.campaignName,
+          objective: nextDraft.adsPlan.campaign.objective,
+          funnelStage: nextDraft.adsPlan.campaign.funnelStage,
+          market: nextDraft.metadata.icp || 'TW',
+          buyingType: 'auction',
+        },
+        adSetPayload: {
+          name: nextDraft.adsetName,
+          audienceType: nextDraft.adsPlan.adSet.audienceType,
+          audienceWindowDays: nextDraft.adsPlan.adSet.audienceWindowDays,
+          budgetStrategy: nextDraft.adsPlan.adSet.budgetStrategy,
+          optimizationGoal: nextDraft.adsPlan.adSet.optimizationGoal,
+          placementStrategy: nextDraft.adsPlan.adSet.placementStrategy,
+          geo: nextDraft.metadata.icp || 'TW',
+          ageRange: nextDraft.adsPlan.adSet.ageRange,
+        },
+        adPayload: {
+          name: nextDraft.adName,
+          angleFamily: nextDraft.adsPlan.ad.angleFamily,
+          angleLabel: nextDraft.adsPlan.ad.angleLabel,
+          copyMode: nextDraft.adsPlan.ad.copyMode,
+          selectedPlatforms: nextDraft.metadata.selectedPlatforms,
+        },
+        copyPayload,
+        assetSelections,
+        adsMcpPayload: buildAdsMcpPayloadPreview({
+          campaignPayload: {
+            name: nextDraft.campaignName,
+            objective: nextDraft.adsPlan.campaign.objective,
+            funnelStage: nextDraft.adsPlan.campaign.funnelStage,
+            market: nextDraft.metadata.icp || 'TW',
+            buyingType: 'auction',
+          },
+          adSetPayload: {
+            name: nextDraft.adsetName,
+            audienceType: nextDraft.adsPlan.adSet.audienceType,
+            audienceWindowDays: nextDraft.adsPlan.adSet.audienceWindowDays,
+            budgetStrategy: nextDraft.adsPlan.adSet.budgetStrategy,
+            optimizationGoal: nextDraft.adsPlan.adSet.optimizationGoal,
+            placementStrategy: nextDraft.adsPlan.adSet.placementStrategy,
+            geo: nextDraft.metadata.icp || 'TW',
+            ageRange: nextDraft.adsPlan.adSet.ageRange,
+          },
+          adPayload: {
+            name: nextDraft.adName,
+            angleFamily: nextDraft.adsPlan.ad.angleFamily,
+            angleLabel: nextDraft.adsPlan.ad.angleLabel,
+            copyMode: nextDraft.adsPlan.ad.copyMode,
+            selectedPlatforms: nextDraft.metadata.selectedPlatforms,
+          },
+          copyPayload,
+          assetSelections,
+          status: nextDraft.status,
+        }),
+        checklist: buildPublishChecklist({ copyPayload, assetSelections }),
+        lastError: null,
+        preparedAt: nextDraft.status === 'draft' ? null : nextDraft.createdAt,
+      }
     }
+
+    if (nextDraft.publishAttempts === undefined) {
+      changed = true
+      nextDraft.publishAttempts = nextDraft.status === 'published' ? 1 : 0
+    }
+
+    if (nextDraft.status === 'published' && !nextDraft.publishedAt) {
+      changed = true
+      nextDraft.publishedAt = nextDraft.createdAt
+    }
+
+    return nextDraft
   })
 
   if (!changed) {
@@ -465,6 +707,9 @@ function App() {
   const latestBatchDrafts = latestBatch
     ? state.drafts.filter((draft) => draft.batchId === latestBatch.id)
     : []
+  const publishableDrafts = state.drafts.filter(
+    (draft) => draft.status === 'ready_to_publish' || draft.status === 'publishing',
+  )
   const metaBundleCreatives = useMemo(() => {
     return batchCreatives
       .filter((creative) => creative.reviewStatus === 'approved')
@@ -906,6 +1151,7 @@ function App() {
 
     const newDrafts: DraftAd[] = approvedReadyForDraft.map((creative) => {
       const adsPlan = buildAdsPlan(creative)
+      const publishBundle = buildPublishBundle(creative, adsPlan)
 
       return {
         id: `draft-${creative.id}`,
@@ -922,6 +1168,7 @@ function App() {
           'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
         destinationUrl: getDestinationUrl(creative),
         assetDeliverables: buildAssetDeliverables(creative),
+        publishBundle,
         adsPlan,
         metadata: {
           icp: creative.metadata.icp,
@@ -934,6 +1181,7 @@ function App() {
           createdAt,
         },
         createdAt,
+        publishAttempts: 0,
         publishedAt: null,
       }
     })
@@ -950,7 +1198,98 @@ function App() {
       ...current,
       drafts: current.drafts.map((draft) =>
         draft.id === draftId
-          ? { ...draft, status: 'published', publishedAt: timestamp }
+          ? {
+              ...draft,
+              status: 'published',
+              publishAttempts: draft.publishAttempts + 1,
+              publishedAt: timestamp,
+              publishBundle: {
+                ...draft.publishBundle,
+                adsMcpPayload: {
+                  ...draft.publishBundle.adsMcpPayload,
+                  ad: {
+                    ...draft.publishBundle.adsMcpPayload.ad,
+                    reviewState: 'published',
+                  },
+                },
+                preparedAt: draft.publishBundle.preparedAt ?? timestamp,
+                lastError: null,
+              },
+            }
+          : draft,
+      ),
+    }))
+  }
+
+  const prepareDraftForPublish = (draftId: string) => {
+    const timestamp = new Date().toISOString()
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.map((draft) => {
+        if (draft.id !== draftId) {
+          return draft
+        }
+
+        const checklist = buildPublishChecklist({
+          copyPayload: draft.publishBundle.copyPayload,
+          assetSelections: draft.publishBundle.assetSelections,
+        })
+
+        return {
+          ...draft,
+          status:
+            checklist.hasCopy &&
+            checklist.hasDestinationUrl &&
+            checklist.hasSelectedAssets
+              ? 'ready_to_publish'
+              : 'failed',
+          publishBundle: {
+            ...draft.publishBundle,
+            adsMcpPayload: {
+              ...draft.publishBundle.adsMcpPayload,
+              ad: {
+                ...draft.publishBundle.adsMcpPayload.ad,
+                reviewState:
+                  checklist.hasCopy &&
+                  checklist.hasDestinationUrl &&
+                  checklist.hasSelectedAssets
+                    ? 'ready_to_publish'
+                    : 'failed',
+              },
+            },
+            checklist,
+            preparedAt: timestamp,
+            lastError:
+              checklist.hasCopy &&
+              checklist.hasDestinationUrl &&
+              checklist.hasSelectedAssets
+                ? null
+                : 'Publish bundle 缺少必要 copy、URL 或素材選擇。',
+          },
+        }
+      }),
+    }))
+  }
+
+  const setDraftPublishing = (draftId: string) => {
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.map((draft) =>
+        draft.id === draftId
+          ? {
+              ...draft,
+              status: 'publishing',
+              publishBundle: {
+                ...draft.publishBundle,
+                adsMcpPayload: {
+                  ...draft.publishBundle.adsMcpPayload,
+                  ad: {
+                    ...draft.publishBundle.adsMcpPayload.ad,
+                    reviewState: 'publishing',
+                  },
+                },
+              },
+            }
           : draft,
       ),
     }))
@@ -1707,26 +2046,112 @@ function App() {
                   {draft.status === 'draft' ? (
                     <button
                       type="button"
+                      className="mini-button success"
+                      onClick={() => prepareDraftForPublish(draft.id)}
+                    >
+                      Prepare publish bundle
+                    </button>
+                  ) : null}
+                  {draft.status === 'ready_to_publish' ? (
+                    <button
+                      type="button"
                       className="mini-button"
+                      onClick={() => setDraftPublishing(draft.id)}
+                    >
+                      Move to publishing
+                    </button>
+                  ) : null}
+                  {draft.status === 'publishing' ? (
+                    <button
+                      type="button"
+                      className="mini-button success"
                       onClick={() => publishDraft(draft.id)}
                     >
-                      Mark draft published
+                      Mark published
                     </button>
-                  ) : (
+                  ) : null}
+                  {draft.status === 'published' ? (
                     <span className="helper-copy">
                       Published {draft.publishedAt ? formatDate(draft.publishedAt) : ''}
                     </span>
-                  )}
+                  ) : null}
+                  {draft.status === 'failed' ? (
+                    <span className="helper-copy">
+                      Failed: {draft.publishBundle.lastError ?? 'unknown error'}
+                    </span>
+                  ) : null}
                 </div>
               </article>
             ))}
           </div>
         </section>
 
+        <section className="panel span-two">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">07 / Publish review</p>
+              <h2>Ready-to-publish bundles</h2>
+            </div>
+            <span className="pill active">{publishableDrafts.length} drafts</span>
+          </div>
+
+          {publishableDrafts.length === 0 ? (
+            <article className="creative-empty-state">
+              <h3>還沒有 ready 的 publish bundle</h3>
+              <p>先在 Draft ad studio 按 `Prepare publish bundle`，確認 bundle 狀態。</p>
+            </article>
+          ) : (
+            <div className="publish-review-grid">
+              {publishableDrafts.map((draft) => (
+                <article key={`publish-${draft.id}`} className="draft-card">
+                  <div>
+                    <p className="eyebrow">{draft.status}</p>
+                    <h3>{draft.publishBundle.adPayload.name}</h3>
+                    <p>{draft.publishBundle.adSetPayload.name}</p>
+                    <p className="helper-copy">{draft.publishBundle.campaignPayload.name}</p>
+                  </div>
+
+                  <div className="draft-schema">
+                    <span>Objective: {draft.publishBundle.campaignPayload.objective}</span>
+                    <span>Audience: {draft.publishBundle.adSetPayload.audienceType}</span>
+                    <span>MCP server: {draft.publishBundle.adsMcpPayload.server}</span>
+                    <span>MCP version: {draft.publishBundle.adsMcpPayload.version}</span>
+                    <span>Primary text: {draft.publishBundle.copyPayload.primaryText}</span>
+                    <span>Headline: {draft.publishBundle.copyPayload.headline}</span>
+                    <span>Description: {draft.publishBundle.copyPayload.description}</span>
+                    <span>URL: {draft.publishBundle.copyPayload.destinationUrl}</span>
+                    <span>
+                      Checklist:
+                      {draft.publishBundle.checklist.hasCopy ? ' copy' : ''}
+                      {draft.publishBundle.checklist.hasDestinationUrl ? ' url' : ''}
+                      {draft.publishBundle.checklist.hasSelectedAssets ? ' assets' : ''}
+                      {draft.publishBundle.checklist.hasMetaAsset ? ' meta' : ''}
+                    </span>
+                  </div>
+
+                  <div className="publish-asset-list">
+                    {draft.publishBundle.assetSelections
+                      .filter((asset) => asset.selected)
+                      .map((asset) => (
+                        <span key={`${draft.id}-${asset.label}`} className="pill muted">
+                          {asset.label}
+                        </span>
+                      ))}
+                  </div>
+
+                  <pre className="payload-preview">
+                    {JSON.stringify(draft.publishBundle.adsMcpPayload, null, 2)}
+                  </pre>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">07 / Funnel analytics</p>
+              <p className="eyebrow">08 / Funnel analytics</p>
               <h2>核心漏斗與 Airbyte 回流</h2>
             </div>
             <button className="primary-button" type="button" onClick={syncAirbyteDemo}>
@@ -1785,7 +2210,7 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">08 / Optimization rules</p>
+              <p className="eyebrow">09 / Optimization rules</p>
               <h2>固定門檻</h2>
             </div>
             <span className="pill muted">rule-based only</span>
@@ -1817,7 +2242,7 @@ function App() {
         <section className="panel span-two">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">09 / Next-step recommendations</p>
+              <p className="eyebrow">10 / Next-step recommendations</p>
               <h2>系統建議，不自動執行</h2>
             </div>
             <span className="pill active">You hold final override</span>

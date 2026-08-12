@@ -2,7 +2,12 @@ export type LibraryKind = 'use_case' | 'benefit'
 
 export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
-export type DraftStatus = 'draft' | 'published'
+export type DraftStatus =
+  | 'draft'
+  | 'ready_to_publish'
+  | 'publishing'
+  | 'published'
+  | 'failed'
 
 export type Platform = 'Facebook' | 'Instagram' | 'Threads' | 'Google Ads'
 
@@ -28,6 +33,100 @@ export type OptimizationGoal = 'conversions' | 'landing_page_views' | 'leads'
 export type PlacementStrategy = 'advantage_plus' | 'feeds_only' | 'stories_and_reels'
 
 export type AdAngleFamily = 'benefit' | 'use_case'
+
+export type PublishAssetSelection = {
+  platform: string
+  surface: string
+  aspectRatio: string
+  url: string
+  width: number | null
+  height: number | null
+  mimeType: string | null
+  label: string
+  priority: 'meta_primary' | 'secondary'
+  selected: boolean
+}
+
+export type PublishChecklist = {
+  hasCopy: boolean
+  hasDestinationUrl: boolean
+  hasSelectedAssets: boolean
+  hasMetaAsset: boolean
+}
+
+export type AdsMcpPayloadPreview = {
+  server: 'meta_ads_mcp'
+  version: 'draft_v1'
+  campaign: {
+    name: string
+    objective: CampaignObjective
+    buyingType: 'auction'
+    status: 'paused'
+  }
+  adSet: {
+    name: string
+    optimizationGoal: OptimizationGoal
+    budgetStrategy: BudgetStrategy
+    placementStrategy: PlacementStrategy
+    audience: {
+      type: AudienceType
+      geo: string
+      ageRange: string
+      windowDays: number | null
+    }
+  }
+  creative: {
+    name: string
+    primaryText: string
+    headline: string
+    description: string
+    destinationUrl: string
+    assetUrls: string[]
+    selectedPlatforms: Platform[]
+  }
+  ad: {
+    name: string
+    reviewState: DraftStatus
+  }
+}
+
+export type PublishBundle = {
+  campaignPayload: {
+    name: string
+    objective: CampaignObjective
+    funnelStage: FunnelStage
+    market: string
+    buyingType: 'auction'
+  }
+  adSetPayload: {
+    name: string
+    audienceType: AudienceType
+    audienceWindowDays: number | null
+    budgetStrategy: BudgetStrategy
+    optimizationGoal: OptimizationGoal
+    placementStrategy: PlacementStrategy
+    geo: string
+    ageRange: string
+  }
+  adPayload: {
+    name: string
+    angleFamily: AdAngleFamily
+    angleLabel: string
+    copyMode: CreativeAsset['copyMode']
+    selectedPlatforms: Platform[]
+  }
+  copyPayload: {
+    primaryText: string
+    headline: string
+    description: string
+    destinationUrl: string
+  }
+  assetSelections: PublishAssetSelection[]
+  adsMcpPayload: AdsMcpPayloadPreview
+  checklist: PublishChecklist
+  lastError: string | null
+  preparedAt: string | null
+}
 
 export type CopyDeliverables = {
   meta_ad?: {
@@ -139,6 +238,7 @@ export type DraftAd = {
   description: string
   destinationUrl: string
   assetDeliverables: string[]
+  publishBundle: PublishBundle
   adsPlan: {
     campaign: {
       objective: CampaignObjective
@@ -175,6 +275,7 @@ export type DraftAd = {
     createdAt: string
   }
   createdAt: string
+  publishAttempts: number
   publishedAt: string | null
 }
 
