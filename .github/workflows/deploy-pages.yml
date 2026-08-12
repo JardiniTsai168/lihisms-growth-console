@@ -41,6 +41,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
+        env:
+          VITE_FACEBOOK_APP_ID: "1051745747585304"
+          VITE_FACEBOOK_GRAPH_VERSION: "v26.0"
         run: pnpm build
 
       - name: Upload artifact
