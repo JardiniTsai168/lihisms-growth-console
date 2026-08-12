@@ -696,32 +696,40 @@ function buildLegacyDraftAdsPlan(
 
 function migrateAppState(state: AppState) {
   let changed = false
+  const defaultGateway = buildDefaultAdsMcpGateway()
+  const storedGateway = state.adsMcpGateway
+  const appId = storedGateway?.appId?.trim() ? storedGateway.appId : defaultGateway.appId
+  const graphVersion = storedGateway?.graphVersion?.trim()
+    ? storedGateway.graphVersion
+    : defaultGateway.graphVersion
   const adsMcpGateway = {
-    ...buildDefaultAdsMcpGateway(),
-    ...state.adsMcpGateway,
-    appId: state.adsMcpGateway?.appId ?? buildDefaultAdsMcpGateway().appId,
-    graphVersion: state.adsMcpGateway?.graphVersion ?? buildDefaultAdsMcpGateway().graphVersion,
-    accessToken: state.adsMcpGateway?.accessToken ?? null,
-    tokenExpiresAt: state.adsMcpGateway?.tokenExpiresAt ?? null,
-    grantedScopes: state.adsMcpGateway?.grantedScopes ?? [],
-    oauthState: state.adsMcpGateway?.oauthState ?? null,
-    connectionStatus: state.adsMcpGateway?.connectionStatus ?? 'disconnected',
-    businessName: state.adsMcpGateway?.businessName ?? null,
-    availableAdAccounts: state.adsMcpGateway?.availableAdAccounts ?? [],
-    availablePixels: state.adsMcpGateway?.availablePixels ?? [],
-    lastError: state.adsMcpGateway?.lastError ?? null,
+    ...defaultGateway,
+    ...storedGateway,
+    appId,
+    graphVersion,
+    accessToken: storedGateway?.accessToken ?? null,
+    tokenExpiresAt: storedGateway?.tokenExpiresAt ?? null,
+    grantedScopes: storedGateway?.grantedScopes ?? [],
+    oauthState: storedGateway?.oauthState ?? null,
+    connectionStatus: storedGateway?.connectionStatus ?? 'disconnected',
+    businessName: storedGateway?.businessName ?? null,
+    availableAdAccounts: storedGateway?.availableAdAccounts ?? [],
+    availablePixels: storedGateway?.availablePixels ?? [],
+    lastError: storedGateway?.lastError ?? null,
   }
 
-  if (!state.adsMcpGateway) {
+  if (!storedGateway) {
     changed = true
   }
 
   if (
-    !state.adsMcpGateway?.connectionStatus ||
-    state.adsMcpGateway?.accessToken === undefined ||
-    !state.adsMcpGateway?.availableAdAccounts ||
-    !state.adsMcpGateway?.availablePixels ||
-    state.adsMcpGateway?.lastError === undefined
+    !storedGateway?.connectionStatus ||
+    storedGateway?.accessToken === undefined ||
+    !storedGateway?.availableAdAccounts ||
+    !storedGateway?.availablePixels ||
+    storedGateway?.lastError === undefined ||
+    storedGateway?.appId !== appId ||
+    storedGateway?.graphVersion !== graphVersion
   ) {
     changed = true
   }
