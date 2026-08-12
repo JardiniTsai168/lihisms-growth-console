@@ -324,9 +324,72 @@ function buildAdsPlan(creative: CreativeAsset): DraftAd['adsPlan'] {
   }
 }
 
+function buildLegacyDraftAdsPlan(
+  draft: Pick<DraftAd, 'campaignName' | 'adsetName' | 'adName' | 'metadata'>,
+): DraftAd['adsPlan'] {
+  const funnelStage: FunnelStage = draft.metadata.useCaseId.includes('member')
+    ? 'winback'
+    : 'prospecting'
+  const objective: CampaignObjective = 'conversions'
+  const audienceType: AudienceType = funnelStage === 'winback' ? 'old_leads' : 'broad'
+  const audienceWindowDays = getAudienceWindowDays(audienceType)
+
+  return {
+    campaign: {
+      objective,
+      funnelStage,
+      productLine: draft.metadata.productName,
+      market: draft.metadata.icp || 'TW',
+      campaignName: draft.campaignName,
+    },
+    adSet: {
+      audienceType,
+      audienceWindowDays,
+      geo: draft.metadata.icp || 'TW',
+      ageRange: '25-45',
+      budgetStrategy: getBudgetStrategy(funnelStage),
+      optimizationGoal: getOptimizationGoal(funnelStage, objective),
+      placementStrategy: 'advantage_plus',
+      adsetName: draft.adsetName,
+    },
+    ad: {
+      angleFamily: draft.metadata.useCaseId.startsWith('use-') ? 'use_case' : 'benefit',
+      angleLabel: draft.metadata.angleId,
+      copyMode: draft.adName.includes('Brand') ? '品牌' : '轉單',
+      adName: draft.adName,
+    },
+  }
+}
+
+function migrateAppState(state: AppState) {
+  let changed = false
+
+  const drafts = state.drafts.map((draft) => {
+    if (draft.adsPlan) {
+      return draft
+    }
+
+    changed = true
+    return {
+      ...draft,
+      adsPlan: buildLegacyDraftAdsPlan(draft),
+    }
+  })
+
+  if (!changed) {
+    return state
+  }
+
+  return {
+    ...state,
+    drafts,
+  }
+}
+
 function App() {
   const logoUrl = `${import.meta.env.BASE_URL}lihi-logo-primary.png`
-  const [state, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
+  const [persistedState, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
+  const state = useMemo(() => migrateAppState(persistedState), [persistedState])
   const reviewSectionRef = useRef<HTMLElement | null>(null)
   const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -339,6 +402,12 @@ function App() {
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false)
   const [approvingCreativeId, setApprovingCreativeId] = useState<string | null>(null)
   const [isApprovingBatch, setIsApprovingBatch] = useState(false)
+
+  useEffect(() => {
+    if (state !== persistedState) {
+      setState(state)
+    }
+  }, [persistedState, setState, state])
 
   const activeLibrary = state.library.filter((record) => record.status === 'active')
   const latestBatch = state.batches[0]
