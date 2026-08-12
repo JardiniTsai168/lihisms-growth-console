@@ -3,13 +3,20 @@ import './App.css'
 import { initialState, standardTagBank } from './seed'
 import { buildRecommendations } from './recommendations'
 import type {
+  AdAngleFamily,
   AnalyticsMetric,
   AppState,
+  AudienceType,
+  BudgetStrategy,
+  CampaignObjective,
   CreativeAsset,
   CreativeBatch,
   CopyDeliverables,
   DraftAd,
+  FunnelStage,
   LibraryKind,
+  OptimizationGoal,
+  PlacementStrategy,
   OptimizationRules,
   Platform,
   StrategyRecord,
@@ -76,13 +83,6 @@ const rejectionReasons = [
 ]
 
 const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Threads', 'Google Ads']
-
-const platformIconMap: Record<Platform, string> = {
-  Facebook: 'f',
-  Instagram: '◎',
-  Threads: '@',
-  'Google Ads': 'G',
-}
 
 const usd = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -170,6 +170,160 @@ function getPlatformLabel(platform: string) {
   return normalized
 }
 
+function detectFunnelStage(creative: CreativeAsset): FunnelStage {
+  const useCaseId = creative.metadata.useCaseId
+
+  if (useCaseId.includes('member') || useCaseId.includes('winback')) {
+    return 'winback'
+  }
+
+  return 'prospecting'
+}
+
+function detectAudienceType(funnelStage: FunnelStage, creative: CreativeAsset): AudienceType {
+  if (funnelStage === 'winback') {
+    return 'old_leads'
+  }
+
+  if (creative.copyMode === '轉單') {
+    return 'interest_stack'
+  }
+
+  return 'broad'
+}
+
+function getAudienceWindowDays(audienceType: AudienceType) {
+  switch (audienceType) {
+    case 'site_visitors':
+      return 30
+    case 'engaged_clickers':
+    case 'lp_view_no_signup':
+      return 14
+    case 'old_leads':
+    case 'dormant_customers':
+      return 180
+    default:
+      return null
+  }
+}
+
+function getCampaignObjective(platforms: Platform[]): CampaignObjective {
+  return platforms.includes('Google Ads') ? 'leads' : 'conversions'
+}
+
+function getBudgetStrategy(funnelStage: FunnelStage): BudgetStrategy {
+  return funnelStage === 'prospecting' ? 'lowest_cost' : 'cost_cap'
+}
+
+function getOptimizationGoal(
+  funnelStage: FunnelStage,
+  objective: CampaignObjective,
+): OptimizationGoal {
+  if (objective === 'leads') {
+    return 'leads'
+  }
+
+  return funnelStage === 'prospecting' ? 'landing_page_views' : 'conversions'
+}
+
+function getPlacementStrategy(platforms: Platform[]): PlacementStrategy {
+  if (platforms.includes('Instagram') || platforms.includes('Threads')) {
+    return 'stories_and_reels'
+  }
+
+  return 'advantage_plus'
+}
+
+function getAngleFamily(creative: CreativeAsset): AdAngleFamily {
+  return creative.metadata.useCaseId.startsWith('use-') ? 'use_case' : 'benefit'
+}
+
+function buildCampaignName(productName: string, funnelStage: FunnelStage, objective: CampaignObjective) {
+  return `${productName} | ${capitalizeToken(funnelStage)} | ${capitalizeToken(objective)}`
+}
+
+function buildAdSetName(
+  audienceType: AudienceType,
+  creative: CreativeAsset,
+  audienceWindowDays: number | null,
+) {
+  const productGeo = creative.metadata.icp || 'TW'
+  const audienceLabel = audienceTypeLabelMap[audienceType]
+  const windowLabel = audienceWindowDays ? ` | ${audienceWindowDays}D` : ''
+
+  if (audienceType === 'broad') {
+    return `P01 | ${audienceLabel} | ${productGeo} | 25-45`
+  }
+
+  return `A01 | ${audienceLabel}${windowLabel} | ${productGeo}`
+}
+
+function buildAdName(
+  creative: CreativeAsset,
+  angleFamily: AdAngleFamily,
+) {
+  const familyLabel = angleFamily === 'benefit' ? 'Benefit' : 'UseCase'
+  const copyModeLabel = creative.copyMode === '品牌' ? 'Brand' : 'Conversion'
+
+  return `A01 | ${familyLabel}_${creative.angleId} | ${copyModeLabel} | ${creative.creativeVersion}`
+}
+
+function capitalizeToken(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+const audienceTypeLabelMap: Record<AudienceType, string> = {
+  broad: 'Broad',
+  interest_stack: 'Interest',
+  lookalike: 'LAL',
+  site_visitors: 'Visitors',
+  engaged_clickers: 'EngagedClickers',
+  lp_view_no_signup: 'LPViewNoSignup',
+  old_leads: 'OldLeads',
+  dormant_customers: 'DormantCustomers',
+  crm_high_intent: 'CRMHighIntent',
+}
+
+function buildAdsPlan(creative: CreativeAsset): DraftAd['adsPlan'] {
+  const funnelStage = detectFunnelStage(creative)
+  const audienceType = detectAudienceType(funnelStage, creative)
+  const audienceWindowDays = getAudienceWindowDays(audienceType)
+  const objective = getCampaignObjective(creative.selectedPlatforms)
+  const budgetStrategy = getBudgetStrategy(funnelStage)
+  const optimizationGoal = getOptimizationGoal(funnelStage, objective)
+  const placementStrategy = getPlacementStrategy(creative.selectedPlatforms)
+  const angleFamily = getAngleFamily(creative)
+  const campaignName = buildCampaignName(creative.metadata.productName, funnelStage, objective)
+  const adsetName = buildAdSetName(audienceType, creative, audienceWindowDays)
+  const adName = buildAdName(creative, angleFamily)
+
+  return {
+    campaign: {
+      objective,
+      funnelStage,
+      productLine: creative.metadata.productName,
+      market: creative.metadata.icp || 'TW',
+      campaignName,
+    },
+    adSet: {
+      audienceType,
+      audienceWindowDays,
+      geo: creative.metadata.icp || 'TW',
+      ageRange: '25-45',
+      budgetStrategy,
+      optimizationGoal,
+      placementStrategy,
+      adsetName,
+    },
+    ad: {
+      angleFamily,
+      angleLabel: creative.angleId,
+      copyMode: creative.copyMode,
+      adName,
+    },
+  }
+}
+
 function App() {
   const logoUrl = `${import.meta.env.BASE_URL}lihi-logo-primary.png`
   const [state, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
@@ -239,6 +393,78 @@ function App() {
   const pendingBatchCreatives = batchCreatives.filter(
     (creative) => creative.selectedPlatforms.length > 0 && creative.assetDeliverables.length === 0,
   )
+  const latestBatchDrafts = latestBatch
+    ? state.drafts.filter((draft) => draft.batchId === latestBatch.id)
+    : []
+  const metaBundleCreatives = useMemo(() => {
+    return batchCreatives
+      .filter((creative) => creative.reviewStatus === 'approved')
+      .map((creative) => {
+        const prioritizedAssets = [...creative.assetDeliverables].sort((left, right) => {
+          return Number(isMetaPlatform(right.platform)) - Number(isMetaPlatform(left.platform))
+        })
+        const metaAssetCount = creative.assetDeliverables.filter((asset) =>
+          isMetaPlatform(asset.platform),
+        ).length
+        const metaCopy = creative.copyDeliverables?.meta_ad ?? creative.finalCopy
+
+        return {
+          creative,
+          prioritizedAssets,
+          metaAssetCount,
+          metaCopy,
+        }
+      })
+      .filter((entry) => entry.metaCopy || entry.prioritizedAssets.length > 0)
+  }, [batchCreatives])
+  const validationChecks = useMemo(() => {
+    const reviewReturned = batchCreatives.length > 0
+    const allPlatformsSelected =
+      batchCreatives.length > 0 &&
+      batchCreatives.every((creative) => creative.selectedPlatforms.length > 0)
+    const allFormatsReady =
+      batchCreatives.length > 0 &&
+      batchCreatives.every(
+        (creative) =>
+          creative.reviewStatus === 'approved' &&
+          creative.assetDeliverables.length > 0 &&
+          Boolean(creative.copyDeliverables?.meta_ad ?? creative.finalCopy),
+      )
+    const draftsBuilt = latestBatch
+      ? latestBatchDrafts.length === batchCreatives.length && batchCreatives.length > 0
+      : false
+
+    return [
+      {
+        label: 'Stage 1 review 已回來',
+        detail: reviewReturned
+          ? `${batchCreatives.length} 組 creative 已回傳`
+          : '還沒有 review creatives',
+        done: reviewReturned,
+      },
+      {
+        label: '平台已選齊',
+        detail: allPlatformsSelected
+          ? '這一批每張 creative 都已有平台'
+          : '還有 creative 尚未選平台',
+        done: allPlatformsSelected,
+      },
+      {
+        label: 'Meta 版位與文案已回來',
+        detail: allFormatsReady
+          ? '每張 creative 都已有 Meta copy 與展開版位'
+          : '還有 creative 尚未完成 generate-formats',
+        done: allFormatsReady,
+      },
+      {
+        label: 'Draft 已建好',
+        detail: draftsBuilt
+          ? `${latestBatchDrafts.length} 組 draft 已建立`
+          : '還沒把這批 approved creatives 建成 draft',
+        done: draftsBuilt,
+      },
+    ]
+  }, [batchCreatives, latestBatch, latestBatchDrafts])
 
   useEffect(() => {
     if (!isGeneratingBatch && batchCreatives.length === 0) {
@@ -609,34 +835,39 @@ function App() {
 
     const createdAt = new Date().toISOString()
 
-    const newDrafts: DraftAd[] = approvedReadyForDraft.map((creative) => ({
-      id: `draft-${creative.id}`,
-      creativeId: creative.id,
-      batchId: creative.batchId,
-      status: 'draft',
-      campaignName: `lihiSMS | 電商品牌 | ${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? '未命名'}`,
-      adsetName: `${lookupRecord(state.library, creative.metadata.useCaseId)?.title ?? 'Use Case'} / ${creative.selectedPlatforms.join(', ')}`,
-      adName: `${creative.angleId} / ${creative.creativeVersion}`,
-      primaryText: getPrimaryCopy(creative)?.primaryText ?? creative.body,
-      headline: getPrimaryCopy(creative)?.headline ?? creative.headline,
-      description:
-        getPrimaryCopy(creative)?.description ??
-        'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
-      destinationUrl: getDestinationUrl(creative),
-      assetDeliverables: buildAssetDeliverables(creative),
-      metadata: {
-        icp: creative.metadata.icp,
-        useCaseId: creative.metadata.useCaseId,
-        productName: creative.metadata.productName,
-        benefitIds: creative.metadata.benefitIds,
-        angleId: creative.angleId,
-        creativeVersion: creative.creativeVersion,
-        selectedPlatforms: creative.selectedPlatforms,
+    const newDrafts: DraftAd[] = approvedReadyForDraft.map((creative) => {
+      const adsPlan = buildAdsPlan(creative)
+
+      return {
+        id: `draft-${creative.id}`,
+        creativeId: creative.id,
+        batchId: creative.batchId,
+        status: 'draft',
+        campaignName: adsPlan.campaign.campaignName,
+        adsetName: adsPlan.adSet.adsetName,
+        adName: adsPlan.ad.adName,
+        primaryText: getPrimaryCopy(creative)?.primaryText ?? creative.body,
+        headline: getPrimaryCopy(creative)?.headline ?? creative.headline,
+        description:
+          getPrimaryCopy(creative)?.description ??
+          'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
+        destinationUrl: getDestinationUrl(creative),
+        assetDeliverables: buildAssetDeliverables(creative),
+        adsPlan,
+        metadata: {
+          icp: creative.metadata.icp,
+          useCaseId: creative.metadata.useCaseId,
+          productName: creative.metadata.productName,
+          benefitIds: creative.metadata.benefitIds,
+          angleId: creative.angleId,
+          creativeVersion: creative.creativeVersion,
+          selectedPlatforms: creative.selectedPlatforms,
+          createdAt,
+        },
         createdAt,
-      },
-      createdAt,
-      publishedAt: null,
-    }))
+        publishedAt: null,
+      }
+    })
 
     setState((current) => ({
       ...current,
@@ -1113,8 +1344,7 @@ function App() {
                     }
                     onClick={() => toggleBatchPlatform(platform)}
                   >
-                    <span className="platform-pill-icon" aria-hidden="true">{platformIconMap[platform]}</span>
-                    {platform}
+                    <PlatformBadge platform={platform} />
                   </button>
                 ))}
               </div>
@@ -1238,7 +1468,9 @@ function App() {
                                 target="_blank"
                                 rel="noreferrer"
                               >
-                                <strong>{getPlatformLabel(asset.platform)}</strong>
+                                <strong>
+                                  <PlatformBadge platform={getPlatformLabel(asset.platform)} compact />
+                                </strong>
                                 <span>{asset.surface}</span>
                                 <span>{asset.aspectRatio}</span>
                                 <span>{asset.width} × {asset.height}</span>
@@ -1258,7 +1490,98 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">04 / Draft builder</p>
+              <p className="eyebrow">04 / Flow validation</p>
+              <h2>完整流程驗收</h2>
+            </div>
+            <span className="pill muted">latest batch only</span>
+          </div>
+
+          <div className="validation-grid">
+            {validationChecks.map((check) => (
+              <article
+                key={check.label}
+                className={check.done ? 'validation-card is-done' : 'validation-card'}
+              >
+                <span className={check.done ? 'pill active' : 'pill muted'}>
+                  {check.done ? 'done' : 'pending'}
+                </span>
+                <h3>{check.label}</h3>
+                <p>{check.detail}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel span-two">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">05 / Meta delivery bundle</p>
+              <h2>素材交付檢查</h2>
+            </div>
+            <span className="pill active">Meta first, keep all assets</span>
+          </div>
+
+          {metaBundleCreatives.length === 0 ? (
+            <article className="creative-empty-state">
+              <h3>還沒有可交付的素材 bundle</h3>
+              <p>先完成 Approved，讓 creative.bktsai.link 回文案與對應版位。</p>
+            </article>
+          ) : (
+            <div className="meta-bundle-grid">
+              {metaBundleCreatives.map(({ creative, prioritizedAssets, metaAssetCount, metaCopy }) => (
+                <article key={`meta-bundle-${creative.id}`} className="draft-card">
+                  <div>
+                    <p className="eyebrow">{creative.creativeVersion}</p>
+                    <h3>{creative.headline}</h3>
+                    <p className="helper-copy">{creative.metadata.productName}</p>
+                  </div>
+
+                  <div className="tag-row">
+                    <span className="tag">All assets {prioritizedAssets.length}</span>
+                    <span className="tag">Meta assets {metaAssetCount}</span>
+                    <span className="tag">已選平台 {creative.selectedPlatforms.join(', ')}</span>
+                  </div>
+
+                  {metaCopy ? (
+                    <div className="draft-schema">
+                      <span>Primary text: {metaCopy.primaryText}</span>
+                      <span>Headline: {metaCopy.headline}</span>
+                      <span>Description: {metaCopy.description || 'none'}</span>
+                      <span>URL: {metaCopy.destinationUrl || 'none'}</span>
+                    </div>
+                  ) : (
+                    <p className="helper-copy">尚未回傳 Meta 文案。</p>
+                  )}
+
+                  <div className="returned-assets">
+                    {prioritizedAssets.map((asset) => (
+                      <a
+                        key={`meta-${creative.id}-${asset.platform}-${asset.surface}-${asset.aspectRatio}`}
+                        className="returned-asset-card"
+                        href={asset.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <strong>
+                          <PlatformBadge platform={getPlatformLabel(asset.platform)} compact />
+                        </strong>
+                        <span>{isMetaPlatform(asset.platform) ? 'Meta priority' : 'Other placement'}</span>
+                        <span>{asset.surface}</span>
+                        <span>{asset.aspectRatio}</span>
+                        <span>{asset.width} × {asset.height}</span>
+                      </a>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">06 / Draft builder</p>
               <h2>Draft ad studio</h2>
             </div>
             <button className="primary-button" type="button" onClick={createDraftAds}>
@@ -1280,6 +1603,20 @@ function App() {
                   <p className="helper-copy">{draft.campaignName}</p>
                   <div className="draft-schema">
                     <span>Product: {draft.metadata.productName}</span>
+                    <span>Funnel: {draft.adsPlan.campaign.funnelStage}</span>
+                    <span>Objective: {draft.adsPlan.campaign.objective}</span>
+                    <span>Audience: {draft.adsPlan.adSet.audienceType}</span>
+                    <span>
+                      Window:{' '}
+                      {draft.adsPlan.adSet.audienceWindowDays
+                        ? `${draft.adsPlan.adSet.audienceWindowDays}D`
+                        : 'none'}
+                    </span>
+                    <span>Budget: {draft.adsPlan.adSet.budgetStrategy}</span>
+                    <span>Optimize for: {draft.adsPlan.adSet.optimizationGoal}</span>
+                    <span>Placement: {draft.adsPlan.adSet.placementStrategy}</span>
+                    <span>Angle family: {draft.adsPlan.ad.angleFamily}</span>
+                    <span>Angle: {draft.adsPlan.ad.angleLabel}</span>
                     <span>Primary text: {draft.primaryText}</span>
                     <span>Headline: {draft.headline}</span>
                     <span>Description: {draft.description}</span>
@@ -1320,7 +1657,7 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">05 / Funnel analytics</p>
+              <p className="eyebrow">07 / Funnel analytics</p>
               <h2>核心漏斗與 Airbyte 回流</h2>
             </div>
             <button className="primary-button" type="button" onClick={syncAirbyteDemo}>
@@ -1379,7 +1716,7 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">06 / Optimization rules</p>
+              <p className="eyebrow">08 / Optimization rules</p>
               <h2>固定門檻</h2>
             </div>
             <span className="pill muted">rule-based only</span>
@@ -1411,7 +1748,7 @@ function App() {
         <section className="panel span-two">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">07 / Next-step recommendations</p>
+              <p className="eyebrow">09 / Next-step recommendations</p>
               <h2>系統建議，不自動執行</h2>
             </div>
             <span className="pill active">You hold final override</span>
@@ -1464,6 +1801,27 @@ function RuleField({
   )
 }
 
+function PlatformBadge({
+  platform,
+  compact = false,
+}: {
+  platform: string
+  compact?: boolean
+}) {
+  const normalized = getPlatformLabel(platform)
+  const tone = getPlatformTone(normalized)
+  const glyph = getPlatformGlyph(normalized)
+
+  return (
+    <span className={compact ? 'platform-badge compact' : 'platform-badge'}>
+      <span className={`platform-pill-icon ${tone}`} aria-hidden="true">
+        {glyph}
+      </span>
+      <span>{normalized}</span>
+    </span>
+  )
+}
+
 function slugify(value: string) {
   return value
     .trim()
@@ -1510,6 +1868,50 @@ function assetLabelFromUrl(value: string) {
   } catch {
     return value
   }
+}
+
+function getPlatformTone(platform: string) {
+  switch (platform) {
+    case 'Facebook':
+      return 'facebook'
+    case 'Instagram':
+      return 'instagram'
+    case 'Threads':
+      return 'threads'
+    case 'Google Ads':
+      return 'google-ads'
+    case 'IG Reels':
+      return 'ig-reels'
+    case 'IG Stories':
+      return 'ig-stories'
+    default:
+      return 'default'
+  }
+}
+
+function getPlatformGlyph(platform: string) {
+  switch (platform) {
+    case 'Facebook':
+      return 'f'
+    case 'Instagram':
+      return '◎'
+    case 'Threads':
+      return '@'
+    case 'Google Ads':
+      return 'G'
+    case 'IG Reels':
+      return '▶'
+    case 'IG Stories':
+      return '◐'
+    default:
+      return '•'
+  }
+}
+
+function isMetaPlatform(platform: string) {
+  return ['Facebook', 'Instagram', 'Threads', 'IG Reels', 'IG Stories'].includes(
+    getPlatformLabel(platform),
+  )
 }
 
 async function readErrorMessage(response: Response) {

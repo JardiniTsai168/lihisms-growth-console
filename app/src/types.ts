@@ -6,6 +6,29 @@ export type DraftStatus = 'draft' | 'published'
 
 export type Platform = 'Facebook' | 'Instagram' | 'Threads' | 'Google Ads'
 
+export type CampaignObjective = 'conversions' | 'leads'
+
+export type FunnelStage = 'prospecting' | 'retargeting' | 'winback'
+
+export type AudienceType =
+  | 'broad'
+  | 'interest_stack'
+  | 'lookalike'
+  | 'site_visitors'
+  | 'engaged_clickers'
+  | 'lp_view_no_signup'
+  | 'old_leads'
+  | 'dormant_customers'
+  | 'crm_high_intent'
+
+export type BudgetStrategy = 'lowest_cost' | 'cost_cap'
+
+export type OptimizationGoal = 'conversions' | 'landing_page_views' | 'leads'
+
+export type PlacementStrategy = 'advantage_plus' | 'feeds_only' | 'stories_and_reels'
+
+export type AdAngleFamily = 'benefit' | 'use_case'
+
 export type CopyDeliverables = {
   meta_ad?: {
     primaryText: string
@@ -116,6 +139,31 @@ export type DraftAd = {
   description: string
   destinationUrl: string
   assetDeliverables: string[]
+  adsPlan: {
+    campaign: {
+      objective: CampaignObjective
+      funnelStage: FunnelStage
+      productLine: string
+      market: string
+      campaignName: string
+    }
+    adSet: {
+      audienceType: AudienceType
+      audienceWindowDays: number | null
+      geo: string
+      ageRange: string
+      budgetStrategy: BudgetStrategy
+      optimizationGoal: OptimizationGoal
+      placementStrategy: PlacementStrategy
+      adsetName: string
+    }
+    ad: {
+      angleFamily: AdAngleFamily
+      angleLabel: string
+      copyMode: CreativeAsset['copyMode']
+      adName: string
+    }
+  }
   metadata: {
     icp: string
     useCaseId: string

@@ -196,6 +196,16 @@
   gap: 8px;
 }
 
+.platform-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-badge.compact {
+  gap: 6px;
+}
+
 .platform-pill-icon {
   display: inline-grid;
   place-items: center;
@@ -206,6 +216,32 @@
   font-size: 0.74rem;
   font-weight: 800;
   line-height: 1;
+  color: white;
+}
+
+.platform-pill-icon.facebook {
+  background: #1877f2;
+}
+
+.platform-pill-icon.instagram {
+  background: linear-gradient(135deg, #f58529, #dd2a7b 48%, #8134af 76%, #515bd4);
+}
+
+.platform-pill-icon.threads {
+  background: #111111;
+}
+
+.platform-pill-icon.google-ads {
+  background: linear-gradient(135deg, #4285f4 0 52%, #34a853 52% 100%);
+}
+
+.platform-pill-icon.ig-reels,
+.platform-pill-icon.ig-stories {
+  background: linear-gradient(135deg, #fd1d1d, #c13584 56%, #833ab4);
+}
+
+.platform-pill-icon.default {
+  background: rgba(26, 26, 94, 0.76);
 }
 
 .ghost-button:hover,
@@ -598,6 +634,7 @@ textarea {
 
 .returned-asset-card strong {
   font-size: 0.84rem;
+  font-weight: 700;
 }
 
 .returned-asset-card span {
@@ -607,9 +644,38 @@ textarea {
 
 .draft-list,
 .analytics-list,
-.recommendation-grid {
+.recommendation-grid,
+.validation-grid,
+.meta-bundle-grid {
   display: grid;
   gap: 12px;
+}
+
+.validation-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.validation-card {
+  border-radius: 22px;
+  padding: 18px;
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  background: color-mix(in oklch, var(--panel-alt) 85%, white 15%);
+  display: grid;
+  gap: 10px;
+}
+
+.validation-card.is-done {
+  background: color-mix(in oklch, var(--brand) 10%, white 90%);
+  border-color: color-mix(in oklch, var(--brand) 28%, white 72%);
+}
+
+.validation-card h3,
+.validation-card p {
+  margin: 0;
+}
+
+.meta-bundle-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .api-spec-grid {
