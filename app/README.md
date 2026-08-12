@@ -22,6 +22,18 @@ Production build:
 npm run build
 ```
 
+### OAuth env vars
+
+```bash
+VITE_FACEBOOK_APP_ID=your_meta_app_id
+VITE_FACEBOOK_GRAPH_VERSION=v26.0
+VITE_ADS_MCP_GATEWAY_URL=https://your-gateway.example.com/ads-mcp
+```
+
+`VITE_FACEBOOK_APP_ID` 需要先在 Meta App Dashboard 設定合法的 OAuth redirect URI。GitHub Pages 測試站時，redirect URI 需要包含：
+
+- `https://jardinitsai168.github.io/lihisms-growth-console/`
+
 ## Ads MCP Publish Gateway
 
 前端支援兩種模式：
@@ -102,6 +114,8 @@ backend 需回 2xx，且 body 至少包含：
 
 ### 前端行為
 
+- `Connect Facebook` 會直接走 Meta OAuth implicit token flow
+- 成功後前端會用 Graph API 讀 `me/adaccounts` 與 `/{ad-account-id}/adspixels`
 - 2xx + 完整 JSON：draft 進 `published`
 - 非 2xx：draft 進 `failed`
 - 缺少必要欄位或 response 不是合法 JSON：draft 也會進 `failed`

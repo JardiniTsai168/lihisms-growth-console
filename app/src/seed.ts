@@ -37,13 +37,20 @@ export const defaultRules: OptimizationRules = {
 const defaultAdsMcpGateway = {
   mode: 'demo' as const,
   endpointUrl: '',
+  appId: '',
+  graphVersion: 'v26.0',
   adAccountId: '',
   pixelId: '',
   authStrategy: 'none' as const,
+  accessToken: null,
+  tokenExpiresAt: null,
+  grantedScopes: [],
+  oauthState: null,
   connectionStatus: 'disconnected' as const,
   businessName: null,
   availableAdAccounts: [],
   availablePixels: [],
+  lastError: null,
   lastValidatedAt: null,
 }
 

@@ -106,16 +106,6 @@ const rejectionReasons = [
 
 const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Threads', 'Google Ads']
 
-const demoAdsAccountOptions = [
-  { id: 'act_6677889900', name: 'lihiSMS Growth TW', currency: 'TWD' },
-  { id: 'act_1122334455', name: 'lihi CRM Retargeting', currency: 'TWD' },
-]
-
-const demoPixelOptions = [
-  { id: 'px_lihi_signup_main', name: 'lihiSMS Signup Pixel' },
-  { id: 'px_lihi_lp_retgt', name: 'lihiSMS Landing Page Pixel' },
-]
-
 const usd = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -389,19 +379,113 @@ function buildSubmissionRecord(): PublishBundle['submission'] {
 
 function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
   const endpointUrl = import.meta.env.VITE_ADS_MCP_GATEWAY_URL ?? ''
+  const appId = import.meta.env.VITE_FACEBOOK_APP_ID ?? ''
+  const graphVersion = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION ?? 'v26.0'
 
   return {
     mode: endpointUrl.trim() ? 'remote' : 'demo',
     endpointUrl,
+    appId,
+    graphVersion,
     adAccountId: '',
     pixelId: '',
     authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
+    accessToken: null,
+    tokenExpiresAt: null,
+    grantedScopes: [],
+    oauthState: null,
     connectionStatus: 'disconnected',
     businessName: null,
     availableAdAccounts: [],
     availablePixels: [],
+    lastError: null,
     lastValidatedAt: null,
   }
+}
+
+function buildFacebookRedirectUri() {
+  return `${window.location.origin}${window.location.pathname}`
+}
+
+function buildFacebookOauthUrl(gateway: AdsMcpGatewayConfig, oauthState: string) {
+  const params = new URLSearchParams({
+    client_id: gateway.appId,
+    redirect_uri: buildFacebookRedirectUri(),
+    response_type: 'token',
+    scope: 'ads_management,ads_read,business_management,ads_mcp_management',
+    state: oauthState,
+  })
+
+  return `https://www.facebook.com/${gateway.graphVersion}/dialog/oauth?${params.toString()}`
+}
+
+function parseOauthHash(hash: string) {
+  const normalized = hash.startsWith('#') ? hash.slice(1) : hash
+  const params = new URLSearchParams(normalized)
+
+  return {
+    accessToken: params.get('access_token'),
+    expiresIn: params.get('expires_in'),
+    state: params.get('state'),
+    grantedScopes: params.get('granted_scopes'),
+    error: params.get('error') ?? params.get('error_reason'),
+    errorDescription: params.get('error_description'),
+  }
+}
+
+async function fetchFacebookAdAccounts(gateway: AdsMcpGatewayConfig) {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const params = new URLSearchParams({
+    fields: 'id,name,account_id,currency',
+    access_token: gateway.accessToken,
+  })
+  const response = await fetch(
+    `https://graph.facebook.com/${gateway.graphVersion}/me/adaccounts?${params.toString()}`,
+  )
+  const payload = (await response.json()) as {
+    data?: Array<{ id: string; name?: string; account_id?: string; currency?: string }>
+    error?: { message?: string }
+  }
+
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error?.message ?? `Failed to fetch ad accounts (${response.status})`)
+  }
+
+  return (payload.data ?? []).map((account) => ({
+    id: account.id,
+    name: account.name ?? account.account_id ?? account.id,
+    currency: account.currency ?? 'USD',
+  }))
+}
+
+async function fetchFacebookPixels(gateway: AdsMcpGatewayConfig, adAccountId: string) {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const params = new URLSearchParams({
+    fields: 'id,name',
+    access_token: gateway.accessToken,
+  })
+  const response = await fetch(
+    `https://graph.facebook.com/${gateway.graphVersion}/${adAccountId}/adspixels?${params.toString()}`,
+  )
+  const payload = (await response.json()) as {
+    data?: Array<{ id: string; name?: string }>
+    error?: { message?: string }
+  }
+
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error?.message ?? `Failed to fetch pixels (${response.status})`)
+  }
+
+  return (payload.data ?? []).map((pixel) => ({
+    id: pixel.id,
+    name: pixel.name ?? pixel.id,
+  }))
 }
 
 function buildAdsMcpGatewayRequest(payload: AdsMcpPayloadPreview): AdsMcpGatewayRequest {
@@ -615,10 +699,17 @@ function migrateAppState(state: AppState) {
   const adsMcpGateway = {
     ...buildDefaultAdsMcpGateway(),
     ...state.adsMcpGateway,
+    appId: state.adsMcpGateway?.appId ?? buildDefaultAdsMcpGateway().appId,
+    graphVersion: state.adsMcpGateway?.graphVersion ?? buildDefaultAdsMcpGateway().graphVersion,
+    accessToken: state.adsMcpGateway?.accessToken ?? null,
+    tokenExpiresAt: state.adsMcpGateway?.tokenExpiresAt ?? null,
+    grantedScopes: state.adsMcpGateway?.grantedScopes ?? [],
+    oauthState: state.adsMcpGateway?.oauthState ?? null,
     connectionStatus: state.adsMcpGateway?.connectionStatus ?? 'disconnected',
     businessName: state.adsMcpGateway?.businessName ?? null,
     availableAdAccounts: state.adsMcpGateway?.availableAdAccounts ?? [],
     availablePixels: state.adsMcpGateway?.availablePixels ?? [],
+    lastError: state.adsMcpGateway?.lastError ?? null,
   }
 
   if (!state.adsMcpGateway) {
@@ -627,8 +718,10 @@ function migrateAppState(state: AppState) {
 
   if (
     !state.adsMcpGateway?.connectionStatus ||
+    state.adsMcpGateway?.accessToken === undefined ||
     !state.adsMcpGateway?.availableAdAccounts ||
-    !state.adsMcpGateway?.availablePixels
+    !state.adsMcpGateway?.availablePixels ||
+    state.adsMcpGateway?.lastError === undefined
   ) {
     changed = true
   }
@@ -821,6 +914,7 @@ async function executeAdsMcpPublish(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(gateway.accessToken ? { Authorization: `Bearer ${gateway.accessToken}` } : {}),
     },
     body: JSON.stringify(buildAdsMcpGatewayRequest(payload)),
   })
@@ -867,6 +961,152 @@ function App() {
       setState(state)
     }
   }, [persistedState, setState, state])
+
+  useEffect(() => {
+    const oauthResult = parseOauthHash(window.location.hash)
+    if (
+      !oauthResult.accessToken &&
+      !oauthResult.error &&
+      !oauthResult.grantedScopes &&
+      !oauthResult.expiresIn
+    ) {
+      return
+    }
+
+    window.history.replaceState({}, document.title, window.location.pathname + window.location.search)
+
+    if (oauthResult.error) {
+      setState((current) => ({
+        ...current,
+        adsMcpGateway: {
+          ...current.adsMcpGateway,
+          connectionStatus: 'error',
+          lastError: oauthResult.errorDescription || oauthResult.error,
+          accessToken: null,
+        },
+      }))
+      setPublishStatusMessage(`Facebook OAuth 失敗：${oauthResult.errorDescription || oauthResult.error}`)
+      return
+    }
+
+    if (
+      state.adsMcpGateway.oauthState &&
+      oauthResult.state &&
+      state.adsMcpGateway.oauthState !== oauthResult.state
+    ) {
+      setState((current) => ({
+        ...current,
+        adsMcpGateway: {
+          ...current.adsMcpGateway,
+          connectionStatus: 'error',
+          lastError: 'OAuth state mismatch.',
+          accessToken: null,
+        },
+      }))
+      setPublishStatusMessage('Facebook OAuth 驗證失敗，state mismatch。')
+      return
+    }
+
+    if (!oauthResult.accessToken) {
+      return
+    }
+
+    const expiresInSeconds = Number(oauthResult.expiresIn ?? '0')
+    const tokenExpiresAt =
+      expiresInSeconds > 0 ? new Date(Date.now() + expiresInSeconds * 1000).toISOString() : null
+    const grantedScopes = oauthResult.grantedScopes
+      ? oauthResult.grantedScopes
+          .split(',')
+          .map((scope) => scope.trim())
+          .filter(Boolean)
+      : []
+
+    setState((current) => ({
+      ...current,
+      adsMcpGateway: {
+        ...current.adsMcpGateway,
+        accessToken: oauthResult.accessToken,
+        tokenExpiresAt,
+        grantedScopes,
+        connectionStatus: 'fetching_assets',
+        lastError: null,
+      },
+    }))
+    setPublishStatusMessage('Facebook OAuth 成功，正在抓取 ad accounts...')
+  }, [setState, state.adsMcpGateway.oauthState])
+
+  useEffect(() => {
+    if (
+      state.adsMcpGateway.connectionStatus !== 'fetching_assets' ||
+      !state.adsMcpGateway.accessToken
+    ) {
+      return
+    }
+
+    let cancelled = false
+
+    const run = async () => {
+      try {
+        const availableAdAccounts = await fetchFacebookAdAccounts(state.adsMcpGateway)
+        if (cancelled) {
+          return
+        }
+
+        const nextAdAccountId =
+          state.adsMcpGateway.adAccountId || availableAdAccounts[0]?.id || ''
+        const availablePixels = nextAdAccountId
+          ? await fetchFacebookPixels(state.adsMcpGateway, nextAdAccountId)
+          : []
+        if (cancelled) {
+          return
+        }
+
+        setState((current) => ({
+          ...current,
+          adsMcpGateway: {
+            ...current.adsMcpGateway,
+            connectionStatus: 'connected',
+            businessName: 'Facebook Ads OAuth',
+            availableAdAccounts,
+            availablePixels,
+            adAccountId: nextAdAccountId,
+            pixelId: current.adsMcpGateway.pixelId || availablePixels[0]?.id || '',
+            lastError: null,
+          },
+        }))
+        setPublishStatusMessage('Facebook 已連線，ad account / pixel 已抓回。')
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        const message = error instanceof Error ? error.message : 'Failed to fetch Facebook assets.'
+        setState((current) => ({
+          ...current,
+          adsMcpGateway: {
+            ...current.adsMcpGateway,
+            connectionStatus: 'error',
+            lastError: message,
+            availableAdAccounts: [],
+            availablePixels: [],
+            adAccountId: '',
+            pixelId: '',
+          },
+        }))
+        setPublishStatusMessage(`Facebook account fetch 失敗：${message}`)
+      } finally {
+        if (!cancelled) {
+          setIsConnectingFacebook(false)
+        }
+      }
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [setState, state.adsMcpGateway])
 
   const activeLibrary = state.library.filter((record) => record.status === 'active')
   const latestBatch = state.batches[0]
@@ -1448,35 +1688,23 @@ function App() {
   }
 
   const connectFacebookAds = async () => {
+    if (!state.adsMcpGateway.appId.trim()) {
+      setPublishStatusMessage('缺少 VITE_FACEBOOK_APP_ID，還不能啟動 Facebook OAuth。')
+      return
+    }
+
+    const oauthState = `fb_${Math.random().toString(36).slice(2, 12)}`
     setIsConnectingFacebook(true)
-    setPublishStatusMessage('正在模擬 Facebook OAuth，抓取 ad accounts 與 pixels...')
-
     setState((current) => ({
       ...current,
       adsMcpGateway: {
         ...current.adsMcpGateway,
-        connectionStatus: 'connecting',
+        oauthState,
+        connectionStatus: 'authorizing',
+        lastError: null,
       },
     }))
-
-    await waitAtLeast(900)
-
-    setState((current) => ({
-      ...current,
-      adsMcpGateway: {
-        ...current.adsMcpGateway,
-        connectionStatus: 'connected',
-        businessName: 'lihi Marketing Workspace',
-        availableAdAccounts: demoAdsAccountOptions,
-        availablePixels: demoPixelOptions,
-        adAccountId:
-          current.adsMcpGateway.adAccountId || demoAdsAccountOptions[0]?.id || '',
-        pixelId: current.adsMcpGateway.pixelId || demoPixelOptions[0]?.id || '',
-      },
-    }))
-
-    setPublishStatusMessage('已連上 Facebook，並帶回可用的 ad account / pixel。')
-    setIsConnectingFacebook(false)
+    window.location.assign(buildFacebookOauthUrl(state.adsMcpGateway, oauthState))
   }
 
   const disconnectFacebookAds = () => {
@@ -1490,9 +1718,53 @@ function App() {
         availablePixels: [],
         adAccountId: '',
         pixelId: '',
+        accessToken: null,
+        tokenExpiresAt: null,
+        grantedScopes: [],
+        oauthState: null,
+        lastError: null,
       },
     }))
+    setIsConnectingFacebook(false)
     setPublishStatusMessage('已清除 Facebook 連線。')
+  }
+
+  const selectFacebookAdAccount = async (adAccountId: string) => {
+    setIsConnectingFacebook(true)
+    updateAdsMcpGateway({
+      adAccountId,
+      pixelId: '',
+      availablePixels: [],
+      lastError: null,
+    })
+
+    try {
+      const availablePixels = await fetchFacebookPixels(
+        {
+          ...state.adsMcpGateway,
+          adAccountId,
+        },
+        adAccountId,
+      )
+
+      updateAdsMcpGateway({
+        adAccountId,
+        availablePixels,
+        pixelId: availablePixels[0]?.id ?? '',
+        connectionStatus: 'connected',
+      })
+      setPublishStatusMessage('已更新 ad account，並重新抓回 pixels。')
+    } catch (error) {
+      updateAdsMcpGateway({
+        connectionStatus: 'error',
+        lastError: error instanceof Error ? error.message : 'Failed to fetch pixels.',
+      })
+      setPublishStatusMessage(
+        `Pixel 抓取失敗：${error instanceof Error ? error.message : 'unknown error'}`,
+      )
+    } finally {
+      setIsConnectingFacebook(false)
+    }
   }
 
   const prepareDraftForPublish = (draftId: string) => {
@@ -2530,8 +2802,8 @@ function App() {
               </h3>
               <p className="helper-copy">
                 {state.adsMcpGateway.connectionStatus === 'connected'
-                  ? '系統已抓回可用的 ad account 與 pixel，接下來只要挑選要投放的組合。'
-                  : '正式版這裡會跳 Meta 登入與授權頁；現在先用 demo flow 模擬完整體驗。'}
+                  ? '系統已抓回這個 Facebook Login 可用的 ad account 與 pixel，接下來只要挑選要投放的組合。'
+                  : '按下後會直接跳 Meta OAuth；授權完成後，系統會自動抓回可用的 ad account 與 pixel。'}
               </p>
             </div>
             <div className="draft-actions">
@@ -2572,7 +2844,7 @@ function App() {
                 <span>Ad account</span>
                 <select
                   value={state.adsMcpGateway.adAccountId}
-                  onChange={(event) => updateAdsMcpGateway({ adAccountId: event.target.value })}
+                  onChange={(event) => void selectFacebookAdAccount(event.target.value)}
                 >
                   {state.adsMcpGateway.availableAdAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -2599,6 +2871,7 @@ function App() {
 
           <div className="builder-flow">
             <span>Connection mode: {state.adsMcpGateway.mode}</span>
+            <span>Graph API: {state.adsMcpGateway.graphVersion}</span>
             <span>Meta Ads MCP server: {META_ADS_MCP_SERVER}</span>
             <span>
               Last success:{' '}
@@ -2606,9 +2879,15 @@ function App() {
                 ? formatDate(state.adsMcpGateway.lastValidatedAt)
                 : 'none'}
             </span>
+            {state.adsMcpGateway.tokenExpiresAt ? (
+              <span>Token expires: {formatDate(state.adsMcpGateway.tokenExpiresAt)}</span>
+            ) : null}
           </div>
 
           {publishStatusMessage ? <div className="status-banner">{publishStatusMessage}</div> : null}
+          {state.adsMcpGateway.lastError ? (
+            <div className="error-banner">{state.adsMcpGateway.lastError}</div>
+          ) : null}
 
           <div className="api-spec-grid">
             <article className="api-spec-card">

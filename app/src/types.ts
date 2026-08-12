@@ -50,13 +50,20 @@ export type AdsPixelOption = {
 export type AdsMcpGatewayConfig = {
   mode: AdsMcpGatewayMode
   endpointUrl: string
+  appId: string
+  graphVersion: string
   adAccountId: string
   pixelId: string
   authStrategy: 'none' | 'bearer'
-  connectionStatus: 'disconnected' | 'connecting' | 'connected'
+  accessToken: string | null
+  tokenExpiresAt: string | null
+  grantedScopes: string[]
+  oauthState: string | null
+  connectionStatus: 'disconnected' | 'authorizing' | 'fetching_assets' | 'connected' | 'error'
   businessName: string | null
   availableAdAccounts: AdsAccountOption[]
   availablePixels: AdsPixelOption[]
+  lastError: string | null
   lastValidatedAt: string | null
 }
 
