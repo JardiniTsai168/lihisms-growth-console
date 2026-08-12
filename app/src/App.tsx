@@ -5,6 +5,7 @@ import { buildRecommendations } from './recommendations'
 import type {
   AdAngleFamily,
   AnalyticsMetric,
+  AdsMcpGatewayConfig,
   AppState,
   AudienceType,
   BudgetStrategy,
@@ -28,6 +29,8 @@ import { usePersistentState } from './usePersistentState'
 
 const STORAGE_KEY = 'lihisms-growth-console-v7'
 const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
+const META_ADS_MCP_SERVER = 'https://mcp.facebook.com/ads'
+const DEMO_PUBLISH_LATENCY_MS = 900
 
 type ReviewResponse = {
   batchId: string
@@ -74,6 +77,15 @@ type FormatsResponse = {
     height: number
     mimeType: string
   }>
+}
+
+type AdsMcpPublishResult = {
+  requestId: string
+  responseCode: number
+  responseBody: string
+  externalCampaignId: string
+  externalAdSetId: string
+  externalAdId: string
 }
 
 const rejectionReasons = [
@@ -344,7 +356,35 @@ function buildPublishChecklist(bundle: {
   }
 }
 
+function buildSubmissionRecord(): PublishBundle['submission'] {
+  return {
+    mode: 'demo',
+    requestId: null,
+    submittedAt: null,
+    completedAt: null,
+    responseCode: null,
+    responseBody: null,
+    externalCampaignId: null,
+    externalAdSetId: null,
+    externalAdId: null,
+  }
+}
+
+function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
+  const endpointUrl = import.meta.env.VITE_ADS_MCP_GATEWAY_URL ?? ''
+
+  return {
+    mode: endpointUrl.trim() ? 'remote' : 'demo',
+    endpointUrl,
+    adAccountId: 'act_1234567890',
+    pixelId: 'pixel_lihisms_demo',
+    authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
+    lastValidatedAt: null,
+  }
+}
+
 function buildAdsMcpPayloadPreview(bundle: {
+  gateway: AdsMcpGatewayConfig
   campaignPayload: PublishBundle['campaignPayload']
   adSetPayload: PublishBundle['adSetPayload']
   adPayload: PublishBundle['adPayload']
@@ -355,6 +395,13 @@ function buildAdsMcpPayloadPreview(bundle: {
   return {
     server: 'meta_ads_mcp',
     version: 'draft_v1',
+    operation: 'upsert_campaign_bundle',
+    connection: {
+      endpoint: bundle.gateway.endpointUrl.trim() || META_ADS_MCP_SERVER,
+      mode: bundle.gateway.mode,
+      adAccountId: bundle.gateway.adAccountId.trim(),
+      pixelId: bundle.gateway.pixelId.trim(),
+    },
     campaign: {
       name: bundle.campaignPayload.name,
       objective: bundle.campaignPayload.objective,
@@ -389,7 +436,11 @@ function buildAdsMcpPayloadPreview(bundle: {
   }
 }
 
-function buildPublishBundle(creative: CreativeAsset, adsPlan: DraftAd['adsPlan']): PublishBundle {
+function buildPublishBundle(
+  creative: CreativeAsset,
+  adsPlan: DraftAd['adsPlan'],
+  gateway: AdsMcpGatewayConfig,
+): PublishBundle {
   const copyPayload = {
     primaryText: getPrimaryCopy(creative)?.primaryText ?? creative.body,
     headline: getPrimaryCopy(creative)?.headline ?? creative.headline,
@@ -459,6 +510,7 @@ function buildPublishBundle(creative: CreativeAsset, adsPlan: DraftAd['adsPlan']
     copyPayload,
     assetSelections,
     adsMcpPayload: buildAdsMcpPayloadPreview({
+      gateway,
       campaignPayload,
       adSetPayload,
       adPayload,
@@ -466,6 +518,10 @@ function buildPublishBundle(creative: CreativeAsset, adsPlan: DraftAd['adsPlan']
       assetSelections,
       status: 'draft',
     }),
+    submission: {
+      ...buildSubmissionRecord(),
+      mode: gateway.mode,
+    },
     checklist,
     lastError: null,
     preparedAt: null,
@@ -514,6 +570,11 @@ function buildLegacyDraftAdsPlan(
 
 function migrateAppState(state: AppState) {
   let changed = false
+  const adsMcpGateway = state.adsMcpGateway ?? buildDefaultAdsMcpGateway()
+
+  if (!state.adsMcpGateway) {
+    changed = true
+  }
 
   const drafts = state.drafts.map((draft) => {
     const nextDraft: DraftAd = { ...draft } as DraftAd
@@ -571,6 +632,7 @@ function migrateAppState(state: AppState) {
         copyPayload,
         assetSelections,
         adsMcpPayload: buildAdsMcpPayloadPreview({
+          gateway: adsMcpGateway,
           campaignPayload: {
             name: nextDraft.campaignName,
             objective: nextDraft.adsPlan.campaign.objective,
@@ -599,9 +661,43 @@ function migrateAppState(state: AppState) {
           assetSelections,
           status: nextDraft.status,
         }),
+        submission: {
+          ...buildSubmissionRecord(),
+          mode: adsMcpGateway.mode,
+        },
         checklist: buildPublishChecklist({ copyPayload, assetSelections }),
         lastError: null,
         preparedAt: nextDraft.status === 'draft' ? null : nextDraft.createdAt,
+      }
+    }
+
+    if (!nextDraft.publishBundle.submission) {
+      changed = true
+      nextDraft.publishBundle = {
+        ...nextDraft.publishBundle,
+        submission: {
+          ...buildSubmissionRecord(),
+          mode: adsMcpGateway.mode,
+        },
+      }
+    }
+
+    if (
+      !nextDraft.publishBundle.adsMcpPayload.connection ||
+      !nextDraft.publishBundle.adsMcpPayload.operation
+    ) {
+      changed = true
+      nextDraft.publishBundle = {
+        ...nextDraft.publishBundle,
+        adsMcpPayload: buildAdsMcpPayloadPreview({
+          gateway: adsMcpGateway,
+          campaignPayload: nextDraft.publishBundle.campaignPayload,
+          adSetPayload: nextDraft.publishBundle.adSetPayload,
+          adPayload: nextDraft.publishBundle.adPayload,
+          copyPayload: nextDraft.publishBundle.copyPayload,
+          assetSelections: nextDraft.publishBundle.assetSelections,
+          status: nextDraft.status,
+        }),
       }
     }
 
@@ -624,7 +720,71 @@ function migrateAppState(state: AppState) {
 
   return {
     ...state,
+    adsMcpGateway,
     drafts,
+  }
+}
+
+async function executeAdsMcpPublish(
+  gateway: AdsMcpGatewayConfig,
+  payload: AdsMcpPayloadPreview,
+): Promise<AdsMcpPublishResult> {
+  const requestId = `req_${Math.random().toString(36).slice(2, 10)}`
+  const externalCampaignId = `cmp_${Math.abs(stringScore(payload.campaign.name)).toString(36)}`
+  const externalAdSetId = `adset_${Math.abs(stringScore(payload.adSet.name)).toString(36)}`
+  const externalAdId = `ad_${Math.abs(stringScore(payload.ad.name)).toString(36)}`
+
+  if (gateway.mode === 'demo' || !gateway.endpointUrl.trim()) {
+    await waitAtLeast(DEMO_PUBLISH_LATENCY_MS)
+
+    return {
+      requestId,
+      responseCode: 200,
+      responseBody: JSON.stringify(
+        {
+          ok: true,
+          mode: 'demo',
+          endpoint: payload.connection.endpoint,
+          ids: {
+            campaignId: externalCampaignId,
+            adSetId: externalAdSetId,
+            adId: externalAdId,
+          },
+        },
+        null,
+        2,
+      ),
+      externalCampaignId,
+      externalAdSetId,
+      externalAdId,
+    }
+  }
+
+  const response = await fetch(gateway.endpointUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      server: META_ADS_MCP_SERVER,
+      payload,
+    }),
+  })
+  const responseBody = await response.text()
+
+  if (!response.ok) {
+    throw new Error(responseBody || `Ads MCP publish failed with ${response.status}`)
+  }
+
+  const parsed = safeJsonParse<Record<string, string>>(responseBody)
+
+  return {
+    requestId: parsed?.requestId ?? requestId,
+    responseCode: response.status,
+    responseBody,
+    externalCampaignId: parsed?.campaignId ?? externalCampaignId,
+    externalAdSetId: parsed?.adSetId ?? externalAdSetId,
+    externalAdId: parsed?.adId ?? externalAdId,
   }
 }
 
@@ -644,6 +804,8 @@ function App() {
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false)
   const [approvingCreativeId, setApprovingCreativeId] = useState<string | null>(null)
   const [isApprovingBatch, setIsApprovingBatch] = useState(false)
+  const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null)
+  const [publishStatusMessage, setPublishStatusMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (state !== persistedState) {
@@ -1151,7 +1313,7 @@ function App() {
 
     const newDrafts: DraftAd[] = approvedReadyForDraft.map((creative) => {
       const adsPlan = buildAdsPlan(creative)
-      const publishBundle = buildPublishBundle(creative, adsPlan)
+      const publishBundle = buildPublishBundle(creative, adsPlan, state.adsMcpGateway)
 
       return {
         id: `draft-${creative.id}`,
@@ -1192,33 +1354,39 @@ function App() {
     }))
   }
 
-  const publishDraft = (draftId: string) => {
-    const timestamp = new Date().toISOString()
-    setState((current) => ({
-      ...current,
-      drafts: current.drafts.map((draft) =>
-        draft.id === draftId
-          ? {
-              ...draft,
-              status: 'published',
-              publishAttempts: draft.publishAttempts + 1,
-              publishedAt: timestamp,
-              publishBundle: {
-                ...draft.publishBundle,
-                adsMcpPayload: {
-                  ...draft.publishBundle.adsMcpPayload,
-                  ad: {
-                    ...draft.publishBundle.adsMcpPayload.ad,
-                    reviewState: 'published',
-                  },
+  const updateAdsMcpGateway = (patch: Partial<AdsMcpGatewayConfig>) => {
+    setState((current) => {
+      const nextGateway = {
+        ...current.adsMcpGateway,
+        ...patch,
+      }
+
+      return {
+        ...current,
+        adsMcpGateway: nextGateway,
+        drafts: current.drafts.map((draft) => ({
+          ...draft,
+          publishBundle: {
+            ...draft.publishBundle,
+            adsMcpPayload: buildAdsMcpPayloadPreview({
+              gateway: nextGateway,
+              campaignPayload: draft.publishBundle.campaignPayload,
+              adSetPayload: draft.publishBundle.adSetPayload,
+              adPayload: draft.publishBundle.adPayload,
+              copyPayload: draft.publishBundle.copyPayload,
+              assetSelections: draft.publishBundle.assetSelections,
+              status: draft.status,
+            }),
+            submission: draft.publishBundle.submission.requestId
+              ? draft.publishBundle.submission
+              : {
+                  ...draft.publishBundle.submission,
+                  mode: nextGateway.mode,
                 },
-                preparedAt: draft.publishBundle.preparedAt ?? timestamp,
-                lastError: null,
-              },
-            }
-          : draft,
-      ),
-    }))
+          },
+        })),
+      }
+    })
   }
 
   const prepareDraftForPublish = (draftId: string) => {
@@ -1245,17 +1413,23 @@ function App() {
               : 'failed',
           publishBundle: {
             ...draft.publishBundle,
-            adsMcpPayload: {
-              ...draft.publishBundle.adsMcpPayload,
-              ad: {
-                ...draft.publishBundle.adsMcpPayload.ad,
-                reviewState:
-                  checklist.hasCopy &&
-                  checklist.hasDestinationUrl &&
-                  checklist.hasSelectedAssets
-                    ? 'ready_to_publish'
-                    : 'failed',
-              },
+            adsMcpPayload: buildAdsMcpPayloadPreview({
+              gateway: current.adsMcpGateway,
+              campaignPayload: draft.publishBundle.campaignPayload,
+              adSetPayload: draft.publishBundle.adSetPayload,
+              adPayload: draft.publishBundle.adPayload,
+              copyPayload: draft.publishBundle.copyPayload,
+              assetSelections: draft.publishBundle.assetSelections,
+              status:
+                checklist.hasCopy &&
+                checklist.hasDestinationUrl &&
+                checklist.hasSelectedAssets
+                  ? 'ready_to_publish'
+                  : 'failed',
+            }),
+            submission: {
+              ...buildSubmissionRecord(),
+              mode: current.adsMcpGateway.mode,
             },
             checklist,
             preparedAt: timestamp,
@@ -1271,28 +1445,159 @@ function App() {
     }))
   }
 
-  const setDraftPublishing = (draftId: string) => {
+  const publishDraftToAdsMcp = async (draftId: string) => {
+    const draft = state.drafts.find((item) => item.id === draftId)
+    if (!draft) {
+      return
+    }
+
+    if (
+      state.adsMcpGateway.mode === 'remote' &&
+      (!state.adsMcpGateway.endpointUrl.trim() ||
+        !state.adsMcpGateway.adAccountId.trim() ||
+        !state.adsMcpGateway.pixelId.trim())
+    ) {
+      setPublishStatusMessage('Remote mode 需要 endpoint、ad account id、pixel id 才能送出。')
+      return
+    }
+
+    const submittedAt = new Date().toISOString()
+    setPublishingDraftId(draftId)
+    setPublishStatusMessage(
+      `正在送出 ${draft.publishBundle.adPayload.name} 到 ${
+        state.adsMcpGateway.mode === 'demo' ? 'demo gateway' : 'remote gateway'
+      }...`,
+    )
+
     setState((current) => ({
       ...current,
-      drafts: current.drafts.map((draft) =>
-        draft.id === draftId
+      drafts: current.drafts.map((item) =>
+        item.id === draftId
           ? {
-              ...draft,
+              ...item,
               status: 'publishing',
+              publishAttempts: item.publishAttempts + 1,
               publishBundle: {
-                ...draft.publishBundle,
-                adsMcpPayload: {
-                  ...draft.publishBundle.adsMcpPayload,
-                  ad: {
-                    ...draft.publishBundle.adsMcpPayload.ad,
-                    reviewState: 'publishing',
-                  },
+                ...item.publishBundle,
+                adsMcpPayload: buildAdsMcpPayloadPreview({
+                  gateway: current.adsMcpGateway,
+                  campaignPayload: item.publishBundle.campaignPayload,
+                  adSetPayload: item.publishBundle.adSetPayload,
+                  adPayload: item.publishBundle.adPayload,
+                  copyPayload: item.publishBundle.copyPayload,
+                  assetSelections: item.publishBundle.assetSelections,
+                  status: 'publishing',
+                }),
+                submission: {
+                  ...item.publishBundle.submission,
+                  mode: current.adsMcpGateway.mode,
+                  submittedAt,
+                  completedAt: null,
+                  responseCode: null,
+                  responseBody: null,
                 },
+                lastError: null,
               },
             }
-          : draft,
+          : item,
       ),
     }))
+
+    try {
+      const payload = buildAdsMcpPayloadPreview({
+        gateway: state.adsMcpGateway,
+        campaignPayload: draft.publishBundle.campaignPayload,
+        adSetPayload: draft.publishBundle.adSetPayload,
+        adPayload: draft.publishBundle.adPayload,
+        copyPayload: draft.publishBundle.copyPayload,
+        assetSelections: draft.publishBundle.assetSelections,
+        status: 'publishing',
+      })
+      const result = await executeAdsMcpPublish(state.adsMcpGateway, payload)
+      const completedAt = new Date().toISOString()
+
+      setState((current) => ({
+        ...current,
+        adsMcpGateway: {
+          ...current.adsMcpGateway,
+          lastValidatedAt: completedAt,
+        },
+        drafts: current.drafts.map((item) =>
+          item.id === draftId
+            ? {
+                ...item,
+                status: 'published',
+                publishedAt: completedAt,
+                publishBundle: {
+                  ...item.publishBundle,
+                  adsMcpPayload: buildAdsMcpPayloadPreview({
+                    gateway: current.adsMcpGateway,
+                    campaignPayload: item.publishBundle.campaignPayload,
+                    adSetPayload: item.publishBundle.adSetPayload,
+                    adPayload: item.publishBundle.adPayload,
+                    copyPayload: item.publishBundle.copyPayload,
+                    assetSelections: item.publishBundle.assetSelections,
+                    status: 'published',
+                  }),
+                  submission: {
+                    mode: current.adsMcpGateway.mode,
+                    requestId: result.requestId,
+                    submittedAt,
+                    completedAt,
+                    responseCode: result.responseCode,
+                    responseBody: result.responseBody,
+                    externalCampaignId: result.externalCampaignId,
+                    externalAdSetId: result.externalAdSetId,
+                    externalAdId: result.externalAdId,
+                  },
+                  preparedAt: item.publishBundle.preparedAt ?? submittedAt,
+                  lastError: null,
+                },
+              }
+            : item,
+        ),
+      }))
+
+      setPublishStatusMessage(`已送出 ${draft.publishBundle.adPayload.name}，並回寫 published 狀態。`)
+    } catch (error) {
+      const completedAt = new Date().toISOString()
+      const message = error instanceof Error ? error.message : 'Ads MCP publish failed'
+
+      setState((current) => ({
+        ...current,
+        drafts: current.drafts.map((item) =>
+          item.id === draftId
+            ? {
+                ...item,
+                status: 'failed',
+                publishBundle: {
+                  ...item.publishBundle,
+                  adsMcpPayload: buildAdsMcpPayloadPreview({
+                    gateway: current.adsMcpGateway,
+                    campaignPayload: item.publishBundle.campaignPayload,
+                    adSetPayload: item.publishBundle.adSetPayload,
+                    adPayload: item.publishBundle.adPayload,
+                    copyPayload: item.publishBundle.copyPayload,
+                    assetSelections: item.publishBundle.assetSelections,
+                    status: 'failed',
+                  }),
+                  submission: {
+                    ...item.publishBundle.submission,
+                    mode: current.adsMcpGateway.mode,
+                    submittedAt,
+                    completedAt,
+                    responseBody: message,
+                  },
+                  lastError: message,
+                },
+              }
+            : item,
+        ),
+      }))
+      setPublishStatusMessage(`送出失敗：${message}`)
+    } finally {
+      setPublishingDraftId(null)
+    }
   }
 
   const syncAirbyteDemo = () => {
@@ -2055,20 +2360,15 @@ function App() {
                   {draft.status === 'ready_to_publish' ? (
                     <button
                       type="button"
-                      className="mini-button"
-                      onClick={() => setDraftPublishing(draft.id)}
+                      className="mini-button success"
+                      onClick={() => publishDraftToAdsMcp(draft.id)}
+                      disabled={publishingDraftId === draft.id}
                     >
-                      Move to publishing
+                      {publishingDraftId === draft.id ? 'Publishing…' : 'Publish to Ads MCP'}
                     </button>
                   ) : null}
                   {draft.status === 'publishing' ? (
-                    <button
-                      type="button"
-                      className="mini-button success"
-                      onClick={() => publishDraft(draft.id)}
-                    >
-                      Mark published
-                    </button>
+                    <span className="helper-copy">Publishing in progress…</span>
                   ) : null}
                   {draft.status === 'published' ? (
                     <span className="helper-copy">
@@ -2076,9 +2376,18 @@ function App() {
                     </span>
                   ) : null}
                   {draft.status === 'failed' ? (
-                    <span className="helper-copy">
-                      Failed: {draft.publishBundle.lastError ?? 'unknown error'}
-                    </span>
+                    <>
+                      <span className="helper-copy">
+                        Failed: {draft.publishBundle.lastError ?? 'unknown error'}
+                      </span>
+                      <button
+                        type="button"
+                        className="mini-button"
+                        onClick={() => prepareDraftForPublish(draft.id)}
+                      >
+                        Rebuild bundle
+                      </button>
+                    </>
                   ) : null}
                 </div>
               </article>
@@ -2089,7 +2398,73 @@ function App() {
         <section className="panel span-two">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">07 / Publish review</p>
+              <p className="eyebrow">07 / Ads MCP gateway</p>
+              <h2>Publish gateway</h2>
+            </div>
+            <span className="pill active">{state.adsMcpGateway.mode}</span>
+          </div>
+
+          <div className="gateway-grid">
+            <label className="rule-field">
+              <span>Mode</span>
+              <select
+                value={state.adsMcpGateway.mode}
+                onChange={(event) =>
+                  updateAdsMcpGateway({
+                    mode: event.target.value as AdsMcpGatewayConfig['mode'],
+                    authStrategy: event.target.value === 'remote' ? 'bearer' : 'none',
+                  })
+                }
+              >
+                <option value="demo">demo</option>
+                <option value="remote">remote</option>
+              </select>
+            </label>
+            <label className="rule-field">
+              <span>Gateway endpoint</span>
+              <input
+                type="url"
+                placeholder="https://your-gateway.example.com/ads-mcp"
+                value={state.adsMcpGateway.endpointUrl}
+                onChange={(event) => updateAdsMcpGateway({ endpointUrl: event.target.value })}
+              />
+            </label>
+            <label className="rule-field">
+              <span>Ad account id</span>
+              <input
+                type="text"
+                value={state.adsMcpGateway.adAccountId}
+                onChange={(event) => updateAdsMcpGateway({ adAccountId: event.target.value })}
+              />
+            </label>
+            <label className="rule-field">
+              <span>Pixel id</span>
+              <input
+                type="text"
+                value={state.adsMcpGateway.pixelId}
+                onChange={(event) => updateAdsMcpGateway({ pixelId: event.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="builder-flow">
+            <span>Meta Ads MCP server: {META_ADS_MCP_SERVER}</span>
+            <span>Auth: {state.adsMcpGateway.authStrategy}</span>
+            <span>
+              Last success:{' '}
+              {state.adsMcpGateway.lastValidatedAt
+                ? formatDate(state.adsMcpGateway.lastValidatedAt)
+                : 'none'}
+            </span>
+          </div>
+
+          {publishStatusMessage ? <div className="status-banner">{publishStatusMessage}</div> : null}
+        </section>
+
+        <section className="panel span-two">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">08 / Publish review</p>
               <h2>Ready-to-publish bundles</h2>
             </div>
             <span className="pill active">{publishableDrafts.length} drafts</span>
@@ -2116,6 +2491,8 @@ function App() {
                     <span>Audience: {draft.publishBundle.adSetPayload.audienceType}</span>
                     <span>MCP server: {draft.publishBundle.adsMcpPayload.server}</span>
                     <span>MCP version: {draft.publishBundle.adsMcpPayload.version}</span>
+                    <span>Gateway mode: {draft.publishBundle.adsMcpPayload.connection.mode}</span>
+                    <span>Ad account: {draft.publishBundle.adsMcpPayload.connection.adAccountId}</span>
                     <span>Primary text: {draft.publishBundle.copyPayload.primaryText}</span>
                     <span>Headline: {draft.publishBundle.copyPayload.headline}</span>
                     <span>Description: {draft.publishBundle.copyPayload.description}</span>
@@ -2139,6 +2516,24 @@ function App() {
                       ))}
                   </div>
 
+                  <div className="draft-actions">
+                    {draft.status === 'ready_to_publish' ? (
+                      <button
+                        type="button"
+                        className="mini-button success"
+                        onClick={() => publishDraftToAdsMcp(draft.id)}
+                        disabled={publishingDraftId === draft.id}
+                      >
+                        {publishingDraftId === draft.id ? 'Publishing…' : 'Publish now'}
+                      </button>
+                    ) : null}
+                    {draft.publishBundle.submission.externalAdId ? (
+                      <span className="pill muted">
+                        External ad: {draft.publishBundle.submission.externalAdId}
+                      </span>
+                    ) : null}
+                  </div>
+
                   <pre className="payload-preview">
                     {JSON.stringify(draft.publishBundle.adsMcpPayload, null, 2)}
                   </pre>
@@ -2151,7 +2546,7 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">08 / Funnel analytics</p>
+              <p className="eyebrow">09 / Funnel analytics</p>
               <h2>核心漏斗與 Airbyte 回流</h2>
             </div>
             <button className="primary-button" type="button" onClick={syncAirbyteDemo}>
@@ -2210,7 +2605,7 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">09 / Optimization rules</p>
+              <p className="eyebrow">10 / Optimization rules</p>
               <h2>固定門檻</h2>
             </div>
             <span className="pill muted">rule-based only</span>
@@ -2242,7 +2637,7 @@ function App() {
         <section className="panel span-two">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">10 / Next-step recommendations</p>
+              <p className="eyebrow">11 / Next-step recommendations</p>
               <h2>系統建議，不自動執行</h2>
             </div>
             <span className="pill active">You hold final override</span>
@@ -2361,6 +2756,14 @@ function assetLabelFromUrl(value: string) {
     return pathname.split('/').pop() ?? value
   } catch {
     return value
+  }
+}
+
+function safeJsonParse<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return null
   }
 }
 

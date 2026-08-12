@@ -34,6 +34,15 @@ export const defaultRules: OptimizationRules = {
   maxFrequency: 2.8,
 }
 
+const defaultAdsMcpGateway = {
+  mode: 'demo' as const,
+  endpointUrl: '',
+  adAccountId: 'act_1234567890',
+  pixelId: 'pixel_lihisms_demo',
+  authStrategy: 'none' as const,
+  lastValidatedAt: null,
+}
+
 const library: StrategyRecord[] = [
   record(
     'use-member-winback',
@@ -86,4 +95,5 @@ export const initialState: AppState = {
   drafts: [],
   metrics: [],
   rules: defaultRules,
+  adsMcpGateway: defaultAdsMcpGateway,
 }

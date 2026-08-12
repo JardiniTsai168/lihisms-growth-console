@@ -34,6 +34,29 @@ export type PlacementStrategy = 'advantage_plus' | 'feeds_only' | 'stories_and_r
 
 export type AdAngleFamily = 'benefit' | 'use_case'
 
+export type AdsMcpGatewayMode = 'demo' | 'remote'
+
+export type AdsMcpGatewayConfig = {
+  mode: AdsMcpGatewayMode
+  endpointUrl: string
+  adAccountId: string
+  pixelId: string
+  authStrategy: 'none' | 'bearer'
+  lastValidatedAt: string | null
+}
+
+export type AdsMcpSubmission = {
+  mode: AdsMcpGatewayMode
+  requestId: string | null
+  submittedAt: string | null
+  completedAt: string | null
+  responseCode: number | null
+  responseBody: string | null
+  externalCampaignId: string | null
+  externalAdSetId: string | null
+  externalAdId: string | null
+}
+
 export type PublishAssetSelection = {
   platform: string
   surface: string
@@ -57,6 +80,13 @@ export type PublishChecklist = {
 export type AdsMcpPayloadPreview = {
   server: 'meta_ads_mcp'
   version: 'draft_v1'
+  operation: 'upsert_campaign_bundle'
+  connection: {
+    endpoint: string
+    mode: AdsMcpGatewayMode
+    adAccountId: string
+    pixelId: string
+  }
   campaign: {
     name: string
     objective: CampaignObjective
@@ -123,6 +153,7 @@ export type PublishBundle = {
   }
   assetSelections: PublishAssetSelection[]
   adsMcpPayload: AdsMcpPayloadPreview
+  submission: AdsMcpSubmission
   checklist: PublishChecklist
   lastError: string | null
   preparedAt: string | null
@@ -310,4 +341,5 @@ export type AppState = {
   drafts: DraftAd[]
   metrics: AnalyticsMetric[]
   rules: OptimizationRules
+  adsMcpGateway: AdsMcpGatewayConfig
 }
