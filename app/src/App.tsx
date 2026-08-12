@@ -419,6 +419,20 @@ function buildFacebookOauthUrl(gateway: AdsMcpGatewayConfig, oauthState: string)
   return `https://www.facebook.com/${gateway.graphVersion}/dialog/oauth?${params.toString()}`
 }
 
+function normalizeFacebookAdAccountId(id?: string | null, accountId?: string | null) {
+  const value = (accountId ?? id ?? '').trim()
+  if (!value) {
+    return ''
+  }
+
+  return value.startsWith('act_') ? value : `act_${value}`
+}
+
+function extractFacebookAdAccountNumber(id?: string | null, accountId?: string | null) {
+  const normalizedId = normalizeFacebookAdAccountId(id, accountId)
+  return normalizedId.replace(/^act_/, '')
+}
+
 function parseOauthHash(hash: string) {
   const normalized = hash.startsWith('#') ? hash.slice(1) : hash
   const params = new URLSearchParams(normalized)
@@ -438,27 +452,132 @@ async function fetchFacebookAdAccounts(gateway: AdsMcpGatewayConfig) {
     throw new Error('Missing Facebook access token.')
   }
 
+  const accounts = new Map<string, { id: string; accountId: string; name: string; currency: string }>()
   const params = new URLSearchParams({
     fields: 'id,name,account_id,currency',
+    limit: '100',
     access_token: gateway.accessToken,
   })
-  const response = await fetch(
-    `https://graph.facebook.com/${gateway.graphVersion}/me/adaccounts?${params.toString()}`,
-  )
-  const payload = (await response.json()) as {
-    data?: Array<{ id: string; name?: string; account_id?: string; currency?: string }>
-    error?: { message?: string }
+
+  const directAccounts = await fetchFacebookGraphCollection<{
+    id: string
+    name?: string
+    account_id?: string
+    currency?: string
+  }>(gateway, `/me/adaccounts?${params.toString()}`)
+
+  for (const account of directAccounts) {
+    const normalizedId = normalizeFacebookAdAccountId(account.id, account.account_id)
+    const normalizedAccountId = extractFacebookAdAccountNumber(account.id, account.account_id)
+    accounts.set(normalizedAccountId, {
+      id: normalizedId,
+      accountId: normalizedAccountId,
+      name: account.name ?? account.account_id ?? account.id ?? normalizedId,
+      currency: account.currency ?? 'USD',
+    })
   }
 
-  if (!response.ok || payload.error) {
-    throw new Error(payload.error?.message ?? `Failed to fetch ad accounts (${response.status})`)
+  const businesses = await fetchFacebookBusinesses(gateway)
+
+  for (const business of businesses) {
+    const ownedAccounts = await fetchFacebookBusinessAdAccounts(gateway, business.id, 'owned')
+    for (const account of ownedAccounts) {
+      accounts.set(account.id, account)
+    }
+
+    const clientAccounts = await fetchFacebookBusinessAdAccounts(gateway, business.id, 'client')
+    for (const account of clientAccounts) {
+      accounts.set(account.id, account)
+    }
   }
 
-  return (payload.data ?? []).map((account) => ({
+  return Array.from(accounts.values()).map((account) => ({
     id: account.id,
-    name: account.name ?? account.account_id ?? account.id,
+    accountId: account.accountId,
+    name: account.name,
+    currency: account.currency,
+  })).sort((left, right) => {
+    const nameComparison = left.name.localeCompare(right.name, 'zh-Hant')
+    if (nameComparison !== 0) {
+      return nameComparison
+    }
+
+    return left.accountId.localeCompare(right.accountId)
+  })
+}
+
+async function fetchFacebookBusinesses(gateway: AdsMcpGatewayConfig) {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const params = new URLSearchParams({
+    fields: 'id,name',
+    limit: '100',
+    access_token: gateway.accessToken,
+  })
+
+  return fetchFacebookGraphCollection<{ id: string; name?: string }>(
+    gateway,
+    `/me/businesses?${params.toString()}`,
+  )
+}
+
+async function fetchFacebookBusinessAdAccounts(
+  gateway: AdsMcpGatewayConfig,
+  businessId: string,
+  relationship: 'owned' | 'client',
+) {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const edge = relationship === 'owned' ? 'owned_ad_accounts' : 'client_ad_accounts'
+  const params = new URLSearchParams({
+    fields: 'id,name,account_id,currency',
+    limit: '100',
+    access_token: gateway.accessToken,
+  })
+
+  const accounts = await fetchFacebookGraphCollection<{
+    id: string
+    name?: string
+    account_id?: string
+    currency?: string
+  }>(gateway, `/${businessId}/${edge}?${params.toString()}`)
+
+  return accounts.map((account) => ({
+    id: normalizeFacebookAdAccountId(account.id, account.account_id),
+    accountId: extractFacebookAdAccountNumber(account.id, account.account_id),
+    name: account.name ?? account.account_id ?? account.id ?? '',
     currency: account.currency ?? 'USD',
   }))
+}
+
+async function fetchFacebookGraphCollection<T>(
+  gateway: AdsMcpGatewayConfig,
+  initialPath: string,
+): Promise<T[]> {
+  const records: T[] = []
+  let nextUrl = `https://graph.facebook.com/${gateway.graphVersion}${initialPath}`
+
+  while (nextUrl) {
+    const response = await fetch(nextUrl)
+    const payload = (await response.json()) as {
+      data?: T[]
+      paging?: { next?: string }
+      error?: { message?: string }
+    }
+
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error?.message ?? `Failed to fetch Facebook assets (${response.status})`)
+    }
+
+    records.push(...(payload.data ?? []))
+    nextUrl = payload.paging?.next ?? ''
+  }
+
+  return records
 }
 
 async function fetchFacebookPixels(gateway: AdsMcpGatewayConfig, adAccountId: string) {
@@ -466,12 +585,13 @@ async function fetchFacebookPixels(gateway: AdsMcpGatewayConfig, adAccountId: st
     throw new Error('Missing Facebook access token.')
   }
 
+  const normalizedAdAccountId = normalizeFacebookAdAccountId(adAccountId)
   const params = new URLSearchParams({
     fields: 'id,name',
     access_token: gateway.accessToken,
   })
   const response = await fetch(
-    `https://graph.facebook.com/${gateway.graphVersion}/${adAccountId}/adspixels?${params.toString()}`,
+    `https://graph.facebook.com/${gateway.graphVersion}/${normalizedAdAccountId}/adspixels?${params.toString()}`,
   )
   const payload = (await response.json()) as {
     data?: Array<{ id: string; name?: string }>
@@ -963,6 +1083,7 @@ function App() {
   const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null)
   const [publishStatusMessage, setPublishStatusMessage] = useState<string | null>(null)
   const [isConnectingFacebook, setIsConnectingFacebook] = useState(false)
+  const [adAccountQuery, setAdAccountQuery] = useState('')
 
   useEffect(() => {
     if (state !== persistedState) {
@@ -1062,9 +1183,33 @@ function App() {
 
         const nextAdAccountId =
           state.adsMcpGateway.adAccountId || availableAdAccounts[0]?.id || ''
-        const availablePixels = nextAdAccountId
-          ? await fetchFacebookPixels(state.adsMcpGateway, nextAdAccountId)
-          : []
+
+        setState((current) => ({
+          ...current,
+          adsMcpGateway: {
+            ...current.adsMcpGateway,
+            connectionStatus: 'connected',
+            businessName: 'Facebook Ads OAuth',
+            availableAdAccounts,
+            availablePixels: [],
+            adAccountId: nextAdAccountId,
+            pixelId: '',
+            lastError: null,
+          },
+        }))
+
+        let availablePixels: AdsMcpGatewayConfig['availablePixels'] = []
+        let pixelFetchError: string | null = null
+
+        if (nextAdAccountId) {
+          try {
+            availablePixels = await fetchFacebookPixels(state.adsMcpGateway, nextAdAccountId)
+          } catch (error) {
+            pixelFetchError =
+              error instanceof Error ? error.message : 'Failed to fetch Facebook pixels.'
+          }
+        }
+
         if (cancelled) {
           return
         }
@@ -1079,10 +1224,14 @@ function App() {
             availablePixels,
             adAccountId: nextAdAccountId,
             pixelId: current.adsMcpGateway.pixelId || availablePixels[0]?.id || '',
-            lastError: null,
+            lastError: pixelFetchError,
           },
         }))
-        setPublishStatusMessage('Facebook 已連線，ad account / pixel 已抓回。')
+        setPublishStatusMessage(
+          pixelFetchError
+            ? `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account，但 pixel 抓取失敗：${pixelFetchError}`
+            : `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account / ${availablePixels.length} 個 pixel。`,
+        )
       } catch (error) {
         if (cancelled) {
           return
@@ -1172,6 +1321,38 @@ function App() {
   const latestBatchDrafts = latestBatch
     ? state.drafts.filter((draft) => draft.batchId === latestBatch.id)
     : []
+  const filteredAdAccounts = useMemo(() => {
+    const query = adAccountQuery.trim().toLowerCase()
+    if (!query) {
+      return state.adsMcpGateway.availableAdAccounts
+    }
+
+    return state.adsMcpGateway.availableAdAccounts.filter((account) => {
+      const haystack = [account.name, account.id, account.accountId, account.currency]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [adAccountQuery, state.adsMcpGateway.availableAdAccounts])
+  const visibleAdAccounts = useMemo(() => {
+    if (!state.adsMcpGateway.adAccountId) {
+      return filteredAdAccounts
+    }
+
+    const selectedAccount = state.adsMcpGateway.availableAdAccounts.find(
+      (account) => account.id === state.adsMcpGateway.adAccountId,
+    )
+
+    if (!selectedAccount || filteredAdAccounts.some((account) => account.id === selectedAccount.id)) {
+      return filteredAdAccounts
+    }
+
+    return [selectedAccount, ...filteredAdAccounts]
+  }, [
+    filteredAdAccounts,
+    state.adsMcpGateway.adAccountId,
+    state.adsMcpGateway.availableAdAccounts,
+  ])
   const publishableDrafts = state.drafts.filter(
     (draft) => draft.status === 'ready_to_publish' || draft.status === 'publishing',
   )
@@ -2850,16 +3031,34 @@ function App() {
             <div className="gateway-grid">
               <label className="rule-field">
                 <span>Ad account</span>
+                <input
+                  type="search"
+                  placeholder="搜尋帳號名稱或 ID，例如 lihi.io / 415404632649857"
+                  value={adAccountQuery}
+                  onChange={(event) => setAdAccountQuery(event.target.value)}
+                />
                 <select
                   value={state.adsMcpGateway.adAccountId}
                   onChange={(event) => void selectFacebookAdAccount(event.target.value)}
                 >
-                  {state.adsMcpGateway.availableAdAccounts.map((account) => (
+                  {visibleAdAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
-                      {account.name} · {account.currency} · {account.id}
+                      {account.name} · {account.currency} · {account.accountId}
                     </option>
                   ))}
                 </select>
+                <small>
+                  顯示 {filteredAdAccounts.length} / {state.adsMcpGateway.availableAdAccounts.length} 個 ad
+                  account
+                </small>
+                <details>
+                  <summary>Account diagnostics</summary>
+                  <small>
+                    {state.adsMcpGateway.availableAdAccounts
+                      .map((account) => `${account.name} (${account.accountId})`)
+                      .join(' | ')}
+                  </small>
+                </details>
               </label>
               <label className="rule-field">
                 <span>Pixel</span>

@@ -38,6 +38,7 @@ export type AdsMcpGatewayMode = 'demo' | 'remote'
 
 export type AdsAccountOption = {
   id: string
+  accountId: string
   name: string
   currency: string
 }
