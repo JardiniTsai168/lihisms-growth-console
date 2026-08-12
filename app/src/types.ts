@@ -36,12 +36,27 @@ export type AdAngleFamily = 'benefit' | 'use_case'
 
 export type AdsMcpGatewayMode = 'demo' | 'remote'
 
+export type AdsAccountOption = {
+  id: string
+  name: string
+  currency: string
+}
+
+export type AdsPixelOption = {
+  id: string
+  name: string
+}
+
 export type AdsMcpGatewayConfig = {
   mode: AdsMcpGatewayMode
   endpointUrl: string
   adAccountId: string
   pixelId: string
   authStrategy: 'none' | 'bearer'
+  connectionStatus: 'disconnected' | 'connecting' | 'connected'
+  businessName: string | null
+  availableAdAccounts: AdsAccountOption[]
+  availablePixels: AdsPixelOption[]
   lastValidatedAt: string | null
 }
 

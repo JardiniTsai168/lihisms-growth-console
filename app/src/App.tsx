@@ -106,6 +106,16 @@ const rejectionReasons = [
 
 const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Threads', 'Google Ads']
 
+const demoAdsAccountOptions = [
+  { id: 'act_6677889900', name: 'lihiSMS Growth TW', currency: 'TWD' },
+  { id: 'act_1122334455', name: 'lihi CRM Retargeting', currency: 'TWD' },
+]
+
+const demoPixelOptions = [
+  { id: 'px_lihi_signup_main', name: 'lihiSMS Signup Pixel' },
+  { id: 'px_lihi_lp_retgt', name: 'lihiSMS Landing Page Pixel' },
+]
+
 const usd = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -383,9 +393,13 @@ function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
   return {
     mode: endpointUrl.trim() ? 'remote' : 'demo',
     endpointUrl,
-    adAccountId: 'act_1234567890',
-    pixelId: 'pixel_lihisms_demo',
+    adAccountId: '',
+    pixelId: '',
     authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
+    connectionStatus: 'disconnected',
+    businessName: null,
+    availableAdAccounts: [],
+    availablePixels: [],
     lastValidatedAt: null,
   }
 }
@@ -598,9 +612,24 @@ function buildLegacyDraftAdsPlan(
 
 function migrateAppState(state: AppState) {
   let changed = false
-  const adsMcpGateway = state.adsMcpGateway ?? buildDefaultAdsMcpGateway()
+  const adsMcpGateway = {
+    ...buildDefaultAdsMcpGateway(),
+    ...state.adsMcpGateway,
+    connectionStatus: state.adsMcpGateway?.connectionStatus ?? 'disconnected',
+    businessName: state.adsMcpGateway?.businessName ?? null,
+    availableAdAccounts: state.adsMcpGateway?.availableAdAccounts ?? [],
+    availablePixels: state.adsMcpGateway?.availablePixels ?? [],
+  }
 
   if (!state.adsMcpGateway) {
+    changed = true
+  }
+
+  if (
+    !state.adsMcpGateway?.connectionStatus ||
+    !state.adsMcpGateway?.availableAdAccounts ||
+    !state.adsMcpGateway?.availablePixels
+  ) {
     changed = true
   }
 
@@ -831,6 +860,7 @@ function App() {
   const [isApprovingBatch, setIsApprovingBatch] = useState(false)
   const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null)
   const [publishStatusMessage, setPublishStatusMessage] = useState<string | null>(null)
+  const [isConnectingFacebook, setIsConnectingFacebook] = useState(false)
 
   useEffect(() => {
     if (state !== persistedState) {
@@ -1417,6 +1447,54 @@ function App() {
     })
   }
 
+  const connectFacebookAds = async () => {
+    setIsConnectingFacebook(true)
+    setPublishStatusMessage('正在模擬 Facebook OAuth，抓取 ad accounts 與 pixels...')
+
+    setState((current) => ({
+      ...current,
+      adsMcpGateway: {
+        ...current.adsMcpGateway,
+        connectionStatus: 'connecting',
+      },
+    }))
+
+    await waitAtLeast(900)
+
+    setState((current) => ({
+      ...current,
+      adsMcpGateway: {
+        ...current.adsMcpGateway,
+        connectionStatus: 'connected',
+        businessName: 'lihi Marketing Workspace',
+        availableAdAccounts: demoAdsAccountOptions,
+        availablePixels: demoPixelOptions,
+        adAccountId:
+          current.adsMcpGateway.adAccountId || demoAdsAccountOptions[0]?.id || '',
+        pixelId: current.adsMcpGateway.pixelId || demoPixelOptions[0]?.id || '',
+      },
+    }))
+
+    setPublishStatusMessage('已連上 Facebook，並帶回可用的 ad account / pixel。')
+    setIsConnectingFacebook(false)
+  }
+
+  const disconnectFacebookAds = () => {
+    setState((current) => ({
+      ...current,
+      adsMcpGateway: {
+        ...current.adsMcpGateway,
+        connectionStatus: 'disconnected',
+        businessName: null,
+        availableAdAccounts: [],
+        availablePixels: [],
+        adAccountId: '',
+        pixelId: '',
+      },
+    }))
+    setPublishStatusMessage('已清除 Facebook 連線。')
+  }
+
   const prepareDraftForPublish = (draftId: string) => {
     const timestamp = new Date().toISOString()
     setState((current) => ({
@@ -1476,6 +1554,16 @@ function App() {
   const publishDraftToAdsMcp = async (draftId: string) => {
     const draft = state.drafts.find((item) => item.id === draftId)
     if (!draft) {
+      return
+    }
+
+    if (state.adsMcpGateway.connectionStatus !== 'connected') {
+      setPublishStatusMessage('請先完成 Facebook 連線，再送出 publish。')
+      return
+    }
+
+    if (!state.adsMcpGateway.adAccountId.trim() || !state.adsMcpGateway.pixelId.trim()) {
+      setPublishStatusMessage('請先選擇 ad account 與 pixel。')
       return
     }
 
@@ -2427,57 +2515,91 @@ function App() {
           <div className="panel-header">
             <div>
               <p className="eyebrow">07 / Ads MCP gateway</p>
-              <h2>Publish gateway</h2>
+              <h2>Facebook connection</h2>
             </div>
-            <span className="pill active">{state.adsMcpGateway.mode}</span>
+            <span className="pill active">{state.adsMcpGateway.connectionStatus}</span>
           </div>
 
-          <div className="gateway-grid">
-            <label className="rule-field">
-              <span>Mode</span>
-              <select
-                value={state.adsMcpGateway.mode}
-                onChange={(event) =>
-                  updateAdsMcpGateway({
-                    mode: event.target.value as AdsMcpGatewayConfig['mode'],
-                    authStrategy: event.target.value === 'remote' ? 'bearer' : 'none',
-                  })
-                }
-              >
-                <option value="demo">demo</option>
-                <option value="remote">remote</option>
-              </select>
-            </label>
-            <label className="rule-field">
-              <span>Gateway endpoint</span>
-              <input
-                type="url"
-                placeholder="https://your-gateway.example.com/ads-mcp"
-                value={state.adsMcpGateway.endpointUrl}
-                onChange={(event) => updateAdsMcpGateway({ endpointUrl: event.target.value })}
-              />
-            </label>
-            <label className="rule-field">
-              <span>Ad account id</span>
-              <input
-                type="text"
-                value={state.adsMcpGateway.adAccountId}
-                onChange={(event) => updateAdsMcpGateway({ adAccountId: event.target.value })}
-              />
-            </label>
-            <label className="rule-field">
-              <span>Pixel id</span>
-              <input
-                type="text"
-                value={state.adsMcpGateway.pixelId}
-                onChange={(event) => updateAdsMcpGateway({ pixelId: event.target.value })}
-              />
-            </label>
+          <div className="gateway-auth-card">
+            <div>
+              <p className="eyebrow">facebook ads access</p>
+              <h3>
+                {state.adsMcpGateway.connectionStatus === 'connected'
+                  ? state.adsMcpGateway.businessName ?? 'Facebook connected'
+                  : '還沒連上 Facebook Ads'}
+              </h3>
+              <p className="helper-copy">
+                {state.adsMcpGateway.connectionStatus === 'connected'
+                  ? '系統已抓回可用的 ad account 與 pixel，接下來只要挑選要投放的組合。'
+                  : '正式版這裡會跳 Meta 登入與授權頁；現在先用 demo flow 模擬完整體驗。'}
+              </p>
+            </div>
+            <div className="draft-actions">
+              {state.adsMcpGateway.connectionStatus !== 'connected' ? (
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={connectFacebookAds}
+                  disabled={isConnectingFacebook}
+                >
+                  {isConnectingFacebook ? 'Connecting…' : 'Connect Facebook'}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="mini-button"
+                    onClick={connectFacebookAds}
+                    disabled={isConnectingFacebook}
+                  >
+                    Reconnect
+                  </button>
+                  <button
+                    type="button"
+                    className="mini-button"
+                    onClick={disconnectFacebookAds}
+                  >
+                    Disconnect
+                  </button>
+                </>
+              )}
+            </div>
           </div>
+
+          {state.adsMcpGateway.connectionStatus === 'connected' ? (
+            <div className="gateway-grid">
+              <label className="rule-field">
+                <span>Ad account</span>
+                <select
+                  value={state.adsMcpGateway.adAccountId}
+                  onChange={(event) => updateAdsMcpGateway({ adAccountId: event.target.value })}
+                >
+                  {state.adsMcpGateway.availableAdAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} · {account.currency} · {account.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="rule-field">
+                <span>Pixel</span>
+                <select
+                  value={state.adsMcpGateway.pixelId}
+                  onChange={(event) => updateAdsMcpGateway({ pixelId: event.target.value })}
+                >
+                  {state.adsMcpGateway.availablePixels.map((pixel) => (
+                    <option key={pixel.id} value={pixel.id}>
+                      {pixel.name} · {pixel.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
 
           <div className="builder-flow">
+            <span>Connection mode: {state.adsMcpGateway.mode}</span>
             <span>Meta Ads MCP server: {META_ADS_MCP_SERVER}</span>
-            <span>Auth: {state.adsMcpGateway.authStrategy}</span>
             <span>
               Last success:{' '}
               {state.adsMcpGateway.lastValidatedAt

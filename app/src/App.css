@@ -690,6 +690,27 @@ textarea {
   margin-bottom: 18px;
 }
 
+.gateway-auth-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  padding: 18px;
+  border-radius: 24px;
+  background: color-mix(in oklch, var(--panel-alt) 84%, white 16%);
+  border: 1px solid color-mix(in oklch, var(--line) 86%, transparent 14%);
+  margin-bottom: 18px;
+}
+
+.gateway-auth-card h3,
+.gateway-auth-card p {
+  margin: 0;
+}
+
+.gateway-auth-card p {
+  margin-top: 8px;
+}
+
 .gateway-contract-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
