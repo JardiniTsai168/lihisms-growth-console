@@ -1481,6 +1481,14 @@ function shapeValueForSchema(value: unknown, schema: unknown): unknown {
     return value.map((item) => shapeValueForSchema(item, typedSchema.items))
   }
 
+  if (
+    typedSchema.type === 'string' &&
+    value !== null &&
+    (Array.isArray(value) || typeof value === 'object')
+  ) {
+    return JSON.stringify(value)
+  }
+
   return value
 }
 
