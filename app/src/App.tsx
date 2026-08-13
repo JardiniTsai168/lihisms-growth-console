@@ -461,6 +461,8 @@ function buildFacebookOauthUrl(gateway: AdsMcpGatewayConfig, oauthState: string)
     redirect_uri: buildFacebookRedirectUri(),
     response_type: 'token',
     scope: 'ads_management,ads_read,business_management,ads_mcp_management,pages_show_list',
+    return_scopes: 'true',
+    auth_type: 'rerequest',
     state: oauthState,
   })
 
