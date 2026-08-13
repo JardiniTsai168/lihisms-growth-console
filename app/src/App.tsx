@@ -1545,6 +1545,10 @@ function buildAdsMcpPlacements(placementStrategy: PlacementStrategy) {
   }
 }
 
+function buildRegionalRegulatedCategories(geo: string) {
+  return getCountryCode(geo) === 'TW' ? ['TAIWAN_UNIVERSAL'] : undefined
+}
+
 function extractMcpStructuredData(result: McpToolCallResult) {
   if (result.structuredContent && typeof result.structuredContent === 'object') {
     return result.structuredContent
@@ -1702,6 +1706,7 @@ async function executeAdsMcpPublish(
     destination_type: 'WEBSITE',
     page_id: gateway.pageId,
     pixel_id: gateway.pixelId,
+    regional_regulated_categories: buildRegionalRegulatedCategories(payload.adSet.audience.geo),
     promoted_object: {
       pixel_id: gateway.pixelId,
       custom_event_type:
