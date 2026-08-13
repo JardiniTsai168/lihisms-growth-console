@@ -1222,9 +1222,7 @@ function migrateAppState(state: AppState) {
 }
 
 function getFacebookCampaignObjectiveCandidates(objective: CampaignObjective) {
-  return objective === 'leads'
-    ? ['OUTCOME_LEADS', 'LEADS']
-    : ['OUTCOME_SALES', 'SALES', 'CONVERSIONS']
+  return objective === 'leads' ? ['OUTCOME_LEADS'] : ['OUTCOME_SALES']
 }
 
 function mapOptimizationGoalToMetaOptimizationGoal(goal: OptimizationGoal) {
@@ -1326,38 +1324,22 @@ async function createFacebookCampaignWithFallbacks(
 
   for (const objective of getFacebookCampaignObjectiveCandidates(payload.campaign.objective)) {
     attempts.push({
-      label: `${objective} + minimal`,
-        fields: {
-          name: payload.campaign.name,
-          objective,
-        },
+      label: `${objective} + special_ad_category=NONE`,
+      fields: {
+        name: payload.campaign.name,
+        objective,
+        special_ad_category: 'NONE',
+      },
     })
     attempts.push({
-      label: `${objective} + paused`,
-        fields: {
-          name: payload.campaign.name,
-          objective,
-          status: 'PAUSED',
-        },
+      label: `${objective} + paused + special_ad_category=NONE`,
+      fields: {
+        name: payload.campaign.name,
+        objective,
+        status: 'PAUSED',
+        special_ad_category: 'NONE',
+      },
     })
-    attempts.push({
-      label: `${objective} + ["NONE"]`,
-        fields: {
-          name: payload.campaign.name,
-          objective,
-          status: 'PAUSED',
-          special_ad_categories: ['NONE'],
-        },
-      })
-      attempts.push({
-        label: `${objective} + []`,
-        fields: {
-          name: payload.campaign.name,
-          objective,
-          status: 'PAUSED',
-          special_ad_categories: [],
-        },
-      })
   }
 
   const errors: string[] = []
