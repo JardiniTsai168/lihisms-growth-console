@@ -817,8 +817,21 @@ textarea {
   color: var(--ink);
 }
 
+.structure-row-title,
+.structure-row-meta {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.structure-row-title {
+  font-weight: 700;
+  color: var(--ink);
+}
+
 button.structure-row {
   cursor: pointer;
+  font: inherit;
   transition:
     transform 120ms ease,
     border-color 120ms ease,
@@ -839,14 +852,10 @@ button.structure-row:hover {
   cursor: default;
 }
 
-.structure-row strong,
-.structure-row span {
-  margin: 0;
-}
-
-.structure-row span {
+.structure-row-meta {
   color: rgba(26, 26, 94, 0.74);
   font-size: 0.82rem;
+  margin: 0;
 }
 
 .advanced-panel,

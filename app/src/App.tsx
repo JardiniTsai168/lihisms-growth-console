@@ -3482,14 +3482,14 @@ function App() {
                               setSelectedAdSetId('')
                             }}
                           >
-                            <strong>{campaign.name}</strong>
-                            <span>{campaign.objective}</span>
-                            <span>
+                            <div className="structure-row-title">{campaign.name}</div>
+                            <div className="structure-row-meta">{campaign.objective}</div>
+                            <div className="structure-row-meta">
                               {campaign.status} / {campaign.effectiveStatus}
-                            </span>
-                            <span>
+                            </div>
+                            <div className="structure-row-meta">
                               {stats?.adSetCount ?? 0} ad sets · {stats?.adCount ?? 0} ads
-                            </span>
+                            </div>
                           </button>
                         )
                       })}
@@ -3515,20 +3515,20 @@ function App() {
                             className={`structure-row ${adSet.id === activeAdSetId ? 'selected' : ''}`}
                             onClick={() => setSelectedAdSetId(adSet.id)}
                           >
-                            <strong>{adSet.name}</strong>
-                            <span>{adSet.optimizationGoal}</span>
-                            <span>
+                            <div className="structure-row-title">{adSet.name}</div>
+                            <div className="structure-row-meta">{adSet.optimizationGoal}</div>
+                            <div className="structure-row-meta">
                               {adSet.status} / {adSet.effectiveStatus}
-                            </span>
-                            <span>
+                            </div>
+                            <div className="structure-row-meta">
                               Budget:{' '}
                               {adSet.dailyBudget
                                 ? `daily ${adSet.dailyBudget}`
                                 : adSet.lifetimeBudget
                                   ? `lifetime ${adSet.lifetimeBudget}`
                                   : 'not set'}
-                            </span>
-                            <span>{adSetStats.get(adSet.id) ?? 0} ads</span>
+                            </div>
+                            <div className="structure-row-meta">{adSetStats.get(adSet.id) ?? 0} ads</div>
                           </button>
                         ))}
                       </div>
@@ -3549,11 +3549,11 @@ function App() {
                       <div className="structure-list">
                         {adSetScopedAds.map((ad) => (
                           <div key={ad.id} className="structure-row static">
-                            <strong>{ad.name}</strong>
-                            <span>
+                            <div className="structure-row-title">{ad.name}</div>
+                            <div className="structure-row-meta">
                               {ad.status} / {ad.effectiveStatus}
-                            </span>
-                            <span>ID: {ad.id}</span>
+                            </div>
+                            <div className="structure-row-meta">ID: {ad.id}</div>
                           </div>
                         ))}
                       </div>
