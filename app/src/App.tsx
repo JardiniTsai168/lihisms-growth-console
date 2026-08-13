@@ -1495,7 +1495,6 @@ function shapeValueForSchema(value: unknown, schema: unknown): unknown {
 function buildArgsFromSchema(
   tool: McpToolDefinition | undefined,
   candidates: Record<string, unknown>,
-  extraAllowedFields: string[] = [],
 ) {
   if (!tool?.inputSchema?.properties) {
     return candidates
@@ -1519,22 +1518,6 @@ function buildArgsFromSchema(
     }
   }
 
-  // Some Meta Ads MCP tools accept runtime fields that are missing from the
-  // advertised schema. Allow only explicit opt-in extras to avoid sending
-  // unknown arguments to stricter tools such as ads_create_campaign.
-  for (const propertyName of extraAllowedFields) {
-    if (!Object.prototype.hasOwnProperty.call(candidates, propertyName)) {
-      continue
-    }
-
-    const propertyValue = candidates[propertyName]
-    if (propertyValue === undefined || args[propertyName] !== undefined) {
-      continue
-    }
-
-    args[propertyName] = propertyValue
-  }
-
   if (missing.length > 0) {
     throw new Error(
       `${tool.name} 缺少必要欄位：${missing.join(', ')}。Schema keys: ${Object.keys(
@@ -1544,6 +1527,10 @@ function buildArgsFromSchema(
   }
 
   return args
+}
+
+function toolAllowsArgument(tool: McpToolDefinition | undefined, argumentName: string) {
+  return Boolean(tool?.inputSchema?.properties?.[argumentName])
 }
 
 function buildAdsMcpPlacements(placementStrategy: PlacementStrategy) {
@@ -1710,6 +1697,16 @@ async function executeAdsMcpPublish(
     campaignResult,
   )
 
+  if (
+    getCountryCode(payload.adSet.audience.geo) === 'TW' &&
+    (!toolAllowsArgument(adSetTool, 'regional_regulated_categories') ||
+      !toolAllowsArgument(adSetTool, 'regional_regulation_identities'))
+  ) {
+    throw new Error(
+      '目前這版 Meta Ads MCP `ads_create_ad_set` tool schema 沒有開放台灣廣告申報所需欄位 `regional_regulated_categories` / `regional_regulation_identities`，所以台灣受眾 ad set 無法經由這條 MCP publish 成功。請先改走 Graph API publish，或改用非台灣 geo 測試。',
+    )
+  }
+
   const adSetArgs = buildArgsFromSchema(adSetTool, {
     ad_account_id: gateway.adAccountId,
     account_id: gateway.adAccountId,
@@ -1777,7 +1774,7 @@ async function executeAdsMcpPublish(
     },
     selected_platforms: payload.creative.selectedPlatforms,
     destination_url: payload.creative.destinationUrl,
-  }, ['regional_regulated_categories'])
+  })
   const adSetResult = await callAdsMcpTool(gateway, sessionId, adSetTool.name, adSetArgs)
   const adSetData = extractMcpStructuredData(adSetResult)
   const createdAdSetId = requireMetaEntityId(
