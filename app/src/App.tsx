@@ -303,12 +303,17 @@ function buildCampaignName(productName: string, funnelStage: FunnelStage, object
   return `${productName} | ${capitalizeToken(funnelStage)} | ${capitalizeToken(objective)}`
 }
 
+function resolveFacebookCountryCode(value?: string | null) {
+  const normalized = (value ?? '').trim().toUpperCase()
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : 'TW'
+}
+
 function buildAdSetName(
   audienceType: AudienceType,
   creative: CreativeAsset,
   audienceWindowDays: number | null,
 ) {
-  const productGeo = creative.metadata.icp || 'TW'
+  const productGeo = resolveFacebookCountryCode(creative.metadata.icp)
   const audienceLabel = audienceTypeLabelMap[audienceType]
   const windowLabel = audienceWindowDays ? ` | ${audienceWindowDays}D` : ''
 
@@ -369,7 +374,7 @@ function buildAdsPlan(creative: CreativeAsset): DraftAd['adsPlan'] {
     adSet: {
       audienceType,
       audienceWindowDays,
-      geo: creative.metadata.icp || 'TW',
+      geo: resolveFacebookCountryCode(creative.metadata.icp),
       ageRange: '25-45',
       budgetStrategy,
       optimizationGoal,
@@ -974,7 +979,7 @@ function buildLegacyDraftAdsPlan(
     adSet: {
       audienceType,
       audienceWindowDays,
-      geo: draft.metadata.icp || 'TW',
+      geo: resolveFacebookCountryCode(draft.metadata.icp),
       ageRange: '25-45',
       budgetStrategy: getBudgetStrategy(funnelStage),
       optimizationGoal: getOptimizationGoal(funnelStage, objective),
@@ -1085,7 +1090,7 @@ function migrateAppState(state: AppState) {
           budgetStrategy: nextDraft.adsPlan.adSet.budgetStrategy,
           optimizationGoal: nextDraft.adsPlan.adSet.optimizationGoal,
           placementStrategy: nextDraft.adsPlan.adSet.placementStrategy,
-          geo: nextDraft.metadata.icp || 'TW',
+          geo: resolveFacebookCountryCode(nextDraft.metadata.icp),
           ageRange: nextDraft.adsPlan.adSet.ageRange,
         },
         adPayload: {
@@ -1113,7 +1118,7 @@ function migrateAppState(state: AppState) {
             budgetStrategy: nextDraft.adsPlan.adSet.budgetStrategy,
             optimizationGoal: nextDraft.adsPlan.adSet.optimizationGoal,
             placementStrategy: nextDraft.adsPlan.adSet.placementStrategy,
-            geo: nextDraft.metadata.icp || 'TW',
+            geo: resolveFacebookCountryCode(nextDraft.metadata.icp),
             ageRange: nextDraft.adsPlan.adSet.ageRange,
           },
           adPayload: {
@@ -1164,6 +1169,31 @@ function migrateAppState(state: AppState) {
           assetSelections: nextDraft.publishBundle.assetSelections,
           status: nextDraft.status,
         }),
+      }
+    }
+
+    if (nextDraft.adsPlan.adSet.geo !== resolveFacebookCountryCode(nextDraft.adsPlan.adSet.geo)) {
+      changed = true
+      nextDraft.adsPlan = {
+        ...nextDraft.adsPlan,
+        adSet: {
+          ...nextDraft.adsPlan.adSet,
+          geo: resolveFacebookCountryCode(nextDraft.adsPlan.adSet.geo),
+        },
+      }
+    }
+
+    if (
+      nextDraft.publishBundle.adSetPayload.geo !==
+      resolveFacebookCountryCode(nextDraft.publishBundle.adSetPayload.geo)
+    ) {
+      changed = true
+      nextDraft.publishBundle = {
+        ...nextDraft.publishBundle,
+        adSetPayload: {
+          ...nextDraft.publishBundle.adSetPayload,
+          geo: resolveFacebookCountryCode(nextDraft.publishBundle.adSetPayload.geo),
+        },
       }
     }
 
@@ -1229,8 +1259,7 @@ function parseAgeRange(ageRange: string) {
 }
 
 function getCountryCode(geo: string) {
-  const normalized = geo.trim().toUpperCase()
-  return normalized || 'TW'
+  return resolveFacebookCountryCode(geo)
 }
 
 function buildFacebookTargeting(bundle: PublishBundle) {
@@ -1301,116 +1330,136 @@ async function executeDirectFacebookPublish(
     throw new Error('這份 draft 還沒有可投放的 Meta 素材 URL。')
   }
 
-  const campaign = await postFacebookGraphForm<{ id: string }>(
-    gateway,
-    `/${normalizedAdAccountId}/campaigns`,
-    {
-      name: payload.campaign.name,
-      objective: mapObjectiveToMetaObjective(payload.campaign.objective),
-      status: 'PAUSED',
-      special_ad_categories: JSON.stringify([]),
-      buying_type: 'AUCTION',
-    },
-  )
+  let campaign: { id: string }
+  try {
+    campaign = await postFacebookGraphForm<{ id: string }>(
+      gateway,
+      `/${normalizedAdAccountId}/campaigns`,
+      {
+        name: payload.campaign.name,
+        objective: mapObjectiveToMetaObjective(payload.campaign.objective),
+        status: 'PAUSED',
+        special_ad_categories: JSON.stringify([]),
+        buying_type: 'AUCTION',
+      },
+    )
+  } catch (error) {
+    throw new Error(`Campaign create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
+  }
 
-  const adSet = await postFacebookGraphForm<{ id: string }>(
-    gateway,
-    `/${normalizedAdAccountId}/adsets`,
-    {
-      name: payload.adSet.name,
-      campaign_id: campaign.id,
-      status: 'PAUSED',
-      daily_budget: String(DEFAULT_DAILY_BUDGET_MINOR),
-      billing_event: mapOptimizationGoalToMetaBillingEvent(payload.adSet.optimizationGoal),
-      optimization_goal: mapOptimizationGoalToMetaOptimizationGoal(payload.adSet.optimizationGoal),
-      promoted_object: JSON.stringify({
-        pixel_id: payload.connection.pixelId,
-        custom_event_type: mapObjectiveToCustomEventType(payload.campaign.objective),
-      }),
-      targeting: JSON.stringify(
-        buildFacebookTargeting({
-          campaignPayload: {
-            name: payload.campaign.name,
-            objective: payload.campaign.objective,
-            funnelStage: 'prospecting',
-            market: payload.adSet.audience.geo,
-            buyingType: 'auction',
-          },
-          adSetPayload: {
-            name: payload.adSet.name,
-            audienceType: payload.adSet.audience.type,
-            audienceWindowDays: payload.adSet.audience.windowDays,
-            budgetStrategy: payload.adSet.budgetStrategy,
-            optimizationGoal: payload.adSet.optimizationGoal,
-            placementStrategy: payload.adSet.placementStrategy,
-            geo: payload.adSet.audience.geo,
-            ageRange: payload.adSet.audience.ageRange,
-          },
-          adPayload: {
-            name: payload.ad.name,
-            angleFamily: 'benefit',
-            angleLabel: payload.ad.name,
-            copyMode: '品牌',
-            selectedPlatforms: payload.creative.selectedPlatforms,
-          },
-          copyPayload: {
-            primaryText: payload.creative.primaryText,
-            headline: payload.creative.headline,
-            description: payload.creative.description,
-            destinationUrl: payload.creative.destinationUrl,
-          },
-          assetSelections: [],
-          adsMcpPayload: payload,
-          submission: buildSubmissionRecord(),
-          checklist: {
-            hasCopy: true,
-            hasDestinationUrl: true,
-            hasSelectedAssets: true,
-            hasMetaAsset: true,
-          },
-          lastError: null,
-          preparedAt: null,
+  let adSet: { id: string }
+  try {
+    adSet = await postFacebookGraphForm<{ id: string }>(
+      gateway,
+      `/${normalizedAdAccountId}/adsets`,
+      {
+        name: payload.adSet.name,
+        campaign_id: campaign.id,
+        status: 'PAUSED',
+        daily_budget: String(DEFAULT_DAILY_BUDGET_MINOR),
+        billing_event: mapOptimizationGoalToMetaBillingEvent(payload.adSet.optimizationGoal),
+        optimization_goal: mapOptimizationGoalToMetaOptimizationGoal(payload.adSet.optimizationGoal),
+        promoted_object: JSON.stringify({
+          pixel_id: payload.connection.pixelId,
+          custom_event_type: mapObjectiveToCustomEventType(payload.campaign.objective),
         }),
-      ),
-    },
-  )
+        targeting: JSON.stringify(
+          buildFacebookTargeting({
+            campaignPayload: {
+              name: payload.campaign.name,
+              objective: payload.campaign.objective,
+              funnelStage: 'prospecting',
+              market: payload.adSet.audience.geo,
+              buyingType: 'auction',
+            },
+            adSetPayload: {
+              name: payload.adSet.name,
+              audienceType: payload.adSet.audience.type,
+              audienceWindowDays: payload.adSet.audience.windowDays,
+              budgetStrategy: payload.adSet.budgetStrategy,
+              optimizationGoal: payload.adSet.optimizationGoal,
+              placementStrategy: payload.adSet.placementStrategy,
+              geo: payload.adSet.audience.geo,
+              ageRange: payload.adSet.audience.ageRange,
+            },
+            adPayload: {
+              name: payload.ad.name,
+              angleFamily: 'benefit',
+              angleLabel: payload.ad.name,
+              copyMode: '品牌',
+              selectedPlatforms: payload.creative.selectedPlatforms,
+            },
+            copyPayload: {
+              primaryText: payload.creative.primaryText,
+              headline: payload.creative.headline,
+              description: payload.creative.description,
+              destinationUrl: payload.creative.destinationUrl,
+            },
+            assetSelections: [],
+            adsMcpPayload: payload,
+            submission: buildSubmissionRecord(),
+            checklist: {
+              hasCopy: true,
+              hasDestinationUrl: true,
+              hasSelectedAssets: true,
+              hasMetaAsset: true,
+            },
+            lastError: null,
+            preparedAt: null,
+          }),
+        ),
+      },
+    )
+  } catch (error) {
+    throw new Error(`Ad set create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
+  }
 
-  const creative = await postFacebookGraphForm<{ id: string }>(
-    gateway,
-    `/${normalizedAdAccountId}/adcreatives`,
-    {
-      name: payload.creative.name,
-      object_story_spec: JSON.stringify({
-        page_id: gateway.pageId,
-        link_data: {
-          message: payload.creative.primaryText,
-          name: payload.creative.headline,
-          description: payload.creative.description,
-          link: payload.creative.destinationUrl,
-          image_url: selectedImageUrl,
-          call_to_action: {
-            type: 'LEARN_MORE',
-            value: {
-              link: payload.creative.destinationUrl,
+  let creative: { id: string }
+  try {
+    creative = await postFacebookGraphForm<{ id: string }>(
+      gateway,
+      `/${normalizedAdAccountId}/adcreatives`,
+      {
+        name: payload.creative.name,
+        object_story_spec: JSON.stringify({
+          page_id: gateway.pageId,
+          link_data: {
+            message: payload.creative.primaryText,
+            name: payload.creative.headline,
+            description: payload.creative.description,
+            link: payload.creative.destinationUrl,
+            image_url: selectedImageUrl,
+            call_to_action: {
+              type: 'LEARN_MORE',
+              value: {
+                link: payload.creative.destinationUrl,
+              },
             },
           },
-        },
-      }),
-    },
-  )
+        }),
+      },
+    )
+  } catch (error) {
+    throw new Error(`Ad creative create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
+  }
 
-  const ad = await postFacebookGraphForm<{ id: string }>(
-    gateway,
-    `/${normalizedAdAccountId}/ads`,
-    {
-      name: payload.ad.name,
-      adset_id: adSet.id,
-      creative: JSON.stringify({
-        creative_id: creative.id,
-      }),
-      status: 'PAUSED',
-    },
-  )
+  let ad: { id: string }
+  try {
+    ad = await postFacebookGraphForm<{ id: string }>(
+      gateway,
+      `/${normalizedAdAccountId}/ads`,
+      {
+        name: payload.ad.name,
+        adset_id: adSet.id,
+        creative: JSON.stringify({
+          creative_id: creative.id,
+        }),
+        status: 'PAUSED',
+      },
+    )
+  } catch (error) {
+    throw new Error(`Ad create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
+  }
 
   return {
     requestId: `graph_${Math.random().toString(36).slice(2, 10)}`,
