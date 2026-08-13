@@ -453,6 +453,21 @@ async function fetchFacebookAdAccounts(gateway: AdsMcpGatewayConfig) {
   }
 
   const accounts = new Map<string, { id: string; accountId: string; name: string; currency: string }>()
+  const upsertAccount = (account: {
+    id: string
+    accountId: string
+    name: string
+    currency: string
+  }) => {
+    const canonicalAccountId = extractFacebookAdAccountNumber(account.id, account.accountId)
+    const normalizedId = normalizeFacebookAdAccountId(account.id, account.accountId)
+    accounts.set(canonicalAccountId, {
+      id: normalizedId,
+      accountId: canonicalAccountId,
+      name: account.name,
+      currency: account.currency,
+    })
+  }
   const params = new URLSearchParams({
     fields: 'id,name,account_id,currency',
     limit: '100',
@@ -467,12 +482,14 @@ async function fetchFacebookAdAccounts(gateway: AdsMcpGatewayConfig) {
   }>(gateway, `/me/adaccounts?${params.toString()}`)
 
   for (const account of directAccounts) {
-    const normalizedId = normalizeFacebookAdAccountId(account.id, account.account_id)
-    const normalizedAccountId = extractFacebookAdAccountNumber(account.id, account.account_id)
-    accounts.set(normalizedAccountId, {
-      id: normalizedId,
-      accountId: normalizedAccountId,
-      name: account.name ?? account.account_id ?? account.id ?? normalizedId,
+    upsertAccount({
+      id: account.id ?? '',
+      accountId: account.account_id ?? '',
+      name:
+        account.name ??
+        account.account_id ??
+        account.id ??
+        normalizeFacebookAdAccountId(account.id, account.account_id),
       currency: account.currency ?? 'USD',
     })
   }
@@ -482,12 +499,12 @@ async function fetchFacebookAdAccounts(gateway: AdsMcpGatewayConfig) {
   for (const business of businesses) {
     const ownedAccounts = await fetchFacebookBusinessAdAccounts(gateway, business.id, 'owned')
     for (const account of ownedAccounts) {
-      accounts.set(account.id, account)
+      upsertAccount(account)
     }
 
     const clientAccounts = await fetchFacebookBusinessAdAccounts(gateway, business.id, 'client')
     for (const account of clientAccounts) {
-      accounts.set(account.id, account)
+      upsertAccount(account)
     }
   }
 
@@ -1339,11 +1356,15 @@ function App() {
       return filteredAdAccounts
     }
 
+    const normalizedSelectedAdAccountId = normalizeFacebookAdAccountId(state.adsMcpGateway.adAccountId)
     const selectedAccount = state.adsMcpGateway.availableAdAccounts.find(
-      (account) => account.id === state.adsMcpGateway.adAccountId,
+      (account) => account.id === normalizedSelectedAdAccountId,
     )
 
-    if (!selectedAccount || filteredAdAccounts.some((account) => account.id === selectedAccount.id)) {
+    if (
+      !selectedAccount ||
+      filteredAdAccounts.some((account) => account.id === selectedAccount.id)
+    ) {
       return filteredAdAccounts
     }
 
