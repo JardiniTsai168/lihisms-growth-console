@@ -1642,6 +1642,7 @@ async function executeAdsMcpPublish(
   const campaignArgs = buildArgsFromSchema(campaignTool, {
     ad_account_id: gateway.adAccountId,
     account_id: gateway.adAccountId,
+    campaign_name: payload.campaign.name,
     name: payload.campaign.name,
     objective: mapObjectiveToAdsMcpObjective(payload.campaign.objective),
     special_ad_category: 'NONE',
@@ -1663,6 +1664,7 @@ async function executeAdsMcpPublish(
     ad_account_id: gateway.adAccountId,
     account_id: gateway.adAccountId,
     campaign_id: campaignId,
+    ad_set_name: payload.adSet.name,
     name: payload.adSet.name,
     status: 'PAUSED',
     daily_budget: DEFAULT_DAILY_BUDGET_MINOR,
@@ -1737,6 +1739,7 @@ async function executeAdsMcpPublish(
     ad_set_id: createdAdSetId,
     adset_id: createdAdSetId,
     page_id: gateway.pageId,
+    ad_name: payload.ad.name,
     name: payload.ad.name,
     status: 'PAUSED',
     destination_url: payload.creative.destinationUrl,
