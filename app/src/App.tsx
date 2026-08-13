@@ -1257,6 +1257,11 @@ type McpJsonRpcResponse<T> = {
   error?: McpJsonRpcError
 }
 
+type ServerSentEventBlock = {
+  event?: string
+  data: string[]
+}
+
 type McpToolDefinition = {
   name: string
   description?: string
@@ -1308,14 +1313,14 @@ async function postAdsMcpRpc<T>(
     )
   }
   const text = await httpResponse.text()
-  const parsed = safeJsonParse<McpJsonRpcResponse<T>>(text)
+  const parsed = parseMcpJsonRpcResponse<T>(text)
 
   if (!httpResponse.ok) {
     throw new Error(text || `Ads MCP request failed with ${httpResponse.status}`)
   }
 
   if (!parsed) {
-    throw new Error('Ads MCP returned a non-JSON response.')
+    throw new Error(`Ads MCP returned a non-JSON response. Preview: ${buildResponsePreview(text)}`)
   }
 
   if (parsed.error) {
@@ -4600,6 +4605,54 @@ function safeJsonParse<T>(value: string): T | null {
   } catch {
     return null
   }
+}
+
+function parseMcpJsonRpcResponse<T>(value: string): McpJsonRpcResponse<T> | null {
+  const direct = safeJsonParse<McpJsonRpcResponse<T>>(value)
+  if (direct) {
+    return direct
+  }
+
+  const eventBlocks = parseServerSentEventBlocks(value)
+  for (const block of eventBlocks) {
+    for (const dataLine of block.data) {
+      const parsed = safeJsonParse<McpJsonRpcResponse<T>>(dataLine)
+      if (parsed) {
+        return parsed
+      }
+    }
+  }
+
+  return null
+}
+
+function parseServerSentEventBlocks(value: string): ServerSentEventBlock[] {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return []
+  }
+
+  return trimmed
+    .split(/\r?\n\r?\n/)
+    .map((chunk) => {
+      const block: ServerSentEventBlock = { data: [] }
+      const lines = chunk.split(/\r?\n/)
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          block.event = line.slice('event:'.length).trim()
+        }
+        if (line.startsWith('data:')) {
+          block.data.push(line.slice('data:'.length).trim())
+        }
+      }
+      return block
+    })
+    .filter((block) => block.data.length > 0)
+}
+
+function buildResponsePreview(value: string) {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  return compact.slice(0, 240) || '[empty response]'
 }
 
 function getPlatformTone(platform: string) {
