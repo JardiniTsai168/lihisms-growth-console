@@ -1283,24 +1283,24 @@ function buildFacebookTargeting(bundle: PublishBundle) {
   return targeting
 }
 
-async function postFacebookGraphForm<T>(
+async function postFacebookGraph<T>(
   gateway: AdsMcpGatewayConfig,
   path: string,
-  fields: Record<string, string>,
+  fields: Record<string, unknown>,
 ): Promise<T> {
   if (!gateway.accessToken) {
     throw new Error('Missing Facebook access token.')
   }
 
-  const params = new URLSearchParams(fields)
-  params.set('access_token', gateway.accessToken)
-
   const response = await fetch(`https://graph.facebook.com/${gateway.graphVersion}${path}`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type': 'application/json',
     },
-    body: params.toString(),
+    body: JSON.stringify({
+      ...fields,
+      access_token: gateway.accessToken,
+    }),
   })
 
   const text = await response.text()
@@ -1322,49 +1322,49 @@ async function createFacebookCampaignWithFallbacks(
   adAccountId: string,
   payload: AdsMcpPayloadPreview,
 ): Promise<{ campaign: { id: string }; debug: string }> {
-  const attempts: Array<{ label: string; fields: Record<string, string> }> = []
+  const attempts: Array<{ label: string; fields: Record<string, unknown> }> = []
 
   for (const objective of getFacebookCampaignObjectiveCandidates(payload.campaign.objective)) {
     attempts.push({
       label: `${objective} + minimal`,
-      fields: {
-        name: payload.campaign.name,
-        objective,
-      },
+        fields: {
+          name: payload.campaign.name,
+          objective,
+        },
     })
     attempts.push({
       label: `${objective} + paused`,
-      fields: {
-        name: payload.campaign.name,
-        objective,
-        status: 'PAUSED',
-      },
+        fields: {
+          name: payload.campaign.name,
+          objective,
+          status: 'PAUSED',
+        },
     })
     attempts.push({
       label: `${objective} + ["NONE"]`,
-      fields: {
-        name: payload.campaign.name,
-        objective,
-        status: 'PAUSED',
-        special_ad_categories: JSON.stringify(['NONE']),
-      },
-    })
-    attempts.push({
-      label: `${objective} + []`,
-      fields: {
-        name: payload.campaign.name,
-        objective,
-        status: 'PAUSED',
-        special_ad_categories: JSON.stringify([]),
-      },
-    })
+        fields: {
+          name: payload.campaign.name,
+          objective,
+          status: 'PAUSED',
+          special_ad_categories: ['NONE'],
+        },
+      })
+      attempts.push({
+        label: `${objective} + []`,
+        fields: {
+          name: payload.campaign.name,
+          objective,
+          status: 'PAUSED',
+          special_ad_categories: [],
+        },
+      })
   }
 
   const errors: string[] = []
 
   for (const attempt of attempts) {
     try {
-      const campaign = await postFacebookGraphForm<{ id: string }>(
+      const campaign = await postFacebookGraph<{ id: string }>(
         gateway,
         `/${adAccountId}/campaigns`,
         attempt.fields,
@@ -1415,21 +1415,21 @@ async function executeDirectFacebookPublish(
 
   let adSet: { id: string }
   try {
-    adSet = await postFacebookGraphForm<{ id: string }>(
+    adSet = await postFacebookGraph<{ id: string }>(
       gateway,
       `/${normalizedAdAccountId}/adsets`,
       {
         name: payload.adSet.name,
         campaign_id: campaign.id,
         status: 'PAUSED',
-        daily_budget: String(DEFAULT_DAILY_BUDGET_MINOR),
+        daily_budget: DEFAULT_DAILY_BUDGET_MINOR,
         billing_event: mapOptimizationGoalToMetaBillingEvent(payload.adSet.optimizationGoal),
         optimization_goal: mapOptimizationGoalToMetaOptimizationGoal(payload.adSet.optimizationGoal),
-        promoted_object: JSON.stringify({
+        promoted_object: {
           pixel_id: payload.connection.pixelId,
           custom_event_type: mapObjectiveToCustomEventType(payload.campaign.objective),
-        }),
-        targeting: JSON.stringify(
+        },
+        targeting:
           buildFacebookTargeting({
             campaignPayload: {
               name: payload.campaign.name,
@@ -1473,7 +1473,6 @@ async function executeDirectFacebookPublish(
             lastError: null,
             preparedAt: null,
           }),
-        ),
       },
     )
   } catch (error) {
@@ -1482,12 +1481,12 @@ async function executeDirectFacebookPublish(
 
   let creative: { id: string }
   try {
-    creative = await postFacebookGraphForm<{ id: string }>(
+    creative = await postFacebookGraph<{ id: string }>(
       gateway,
       `/${normalizedAdAccountId}/adcreatives`,
       {
         name: payload.creative.name,
-        object_story_spec: JSON.stringify({
+        object_story_spec: {
           page_id: gateway.pageId,
           link_data: {
             message: payload.creative.primaryText,
@@ -1502,7 +1501,7 @@ async function executeDirectFacebookPublish(
               },
             },
           },
-        }),
+        },
       },
     )
   } catch (error) {
@@ -1511,15 +1510,15 @@ async function executeDirectFacebookPublish(
 
   let ad: { id: string }
   try {
-    ad = await postFacebookGraphForm<{ id: string }>(
+    ad = await postFacebookGraph<{ id: string }>(
       gateway,
       `/${normalizedAdAccountId}/ads`,
       {
         name: payload.ad.name,
         adset_id: adSet.id,
-        creative: JSON.stringify({
+        creative: {
           creative_id: creative.id,
-        }),
+        },
         status: 'PAUSED',
       },
     )
