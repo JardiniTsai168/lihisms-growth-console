@@ -1660,10 +1660,10 @@ function App() {
             businessName: 'Facebook Ads OAuth',
             mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
             availableAdAccounts,
-            availablePixels: [],
+            availablePixels: current.adsMcpGateway.availablePixels,
             availablePages,
             adAccountId: nextAdAccountId,
-            pixelId: '',
+            pixelId: current.adsMcpGateway.pixelId,
             pageId: nextPageId,
             lastError: pageFetchError,
           },
@@ -1693,10 +1693,15 @@ function App() {
             businessName: 'Facebook Ads OAuth',
             mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
             availableAdAccounts,
-            availablePixels,
+            availablePixels:
+              availablePixels.length > 0 ? availablePixels : current.adsMcpGateway.availablePixels,
             availablePages,
             adAccountId: nextAdAccountId,
-            pixelId: current.adsMcpGateway.pixelId || availablePixels[0]?.id || '',
+            pixelId:
+              current.adsMcpGateway.pixelId ||
+              availablePixels[0]?.id ||
+              current.adsMcpGateway.availablePixels[0]?.id ||
+              '',
             pageId: current.adsMcpGateway.pageId || availablePages[0]?.id || '',
             lastError: pixelFetchError ?? pageFetchError,
           },
