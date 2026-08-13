@@ -2019,17 +2019,27 @@ function App() {
   }
 
   const requestFormatsForCreative = async (creative: CreativeAsset) => {
-    const response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        batchId: creative.batchId,
-        creativeId: creative.sourceCreativeId,
-        selectedPlatforms: creative.selectedPlatforms,
-      }),
-    })
+    let response: Response
+
+    try {
+      response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          batchId: creative.batchId,
+          creativeId: creative.sourceCreativeId,
+          selectedPlatforms: creative.selectedPlatforms,
+        }),
+      })
+    } catch (error) {
+      throw new Error(
+        `素材 ${creative.creativeVersion} 連線失敗，請再試一次。${
+          error instanceof Error && error.message ? ` (${error.message})` : ''
+        }`,
+      )
+    }
 
     if (!response.ok) {
       throw new Error(await readErrorMessage(response))
@@ -2089,15 +2099,30 @@ function App() {
     setIsApprovingBatch(true)
 
     try {
-      const results = await Promise.all(
-        pendingBatchCreatives.map(async (creative) => ({
-          creativeId: creative.id,
-          result: await requestFormatsForCreative(creative),
-        })),
-      )
+      const failures: string[] = []
+      let successCount = 0
 
-      for (const entry of results) {
-        applyFormatsResult(entry.creativeId, entry.result)
+      for (const creative of pendingBatchCreatives) {
+        try {
+          const result = await requestFormatsForCreative(creative)
+          applyFormatsResult(creative.id, result)
+          successCount += 1
+        } catch (error) {
+          failures.push(
+            error instanceof Error
+              ? `${creative.creativeVersion}: ${error.message}`
+              : `${creative.creativeVersion}: 版位生成失敗。`,
+          )
+        }
+      }
+
+      if (successCount > 0 && failures.length === 0) {
+        setBatchStatusMessage(`已完成 ${successCount} 組版位素材。`)
+      } else if (successCount > 0) {
+        setBatchStatusMessage(`已完成 ${successCount} 組版位素材，${failures.length} 組失敗。`)
+        setRequestError(failures.join(' | '))
+      } else if (failures.length > 0) {
+        setRequestError(failures.join(' | '))
       }
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '整批版位生成失敗。')
