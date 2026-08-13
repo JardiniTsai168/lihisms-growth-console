@@ -36,7 +36,7 @@ export const defaultRules: OptimizationRules = {
 
 const defaultAdsMcpGateway = {
   mode: 'remote' as const,
-  endpointUrl: 'https://mcp.facebook.com/ads',
+  endpointUrl: 'https://creative.bktsai.link/internal/meta-ads-mcp',
   appId: '',
   graphVersion: 'v26.0',
   adAccountId: '',

@@ -33,6 +33,7 @@ import { usePersistentState } from './usePersistentState'
 const STORAGE_KEY = 'lihisms-growth-console-v7'
 const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
 const META_ADS_MCP_SERVER = 'https://mcp.facebook.com/ads'
+const META_ADS_MCP_RELAY = `${CREATIVE_API_BASE}/meta-ads-mcp`
 const DEMO_PUBLISH_LATENCY_MS = 900
 const DEFAULT_DAILY_BUDGET_MINOR = 10000
 
@@ -423,7 +424,7 @@ function buildSubmissionRecord(): PublishBundle['submission'] {
 
 function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
   const configuredEndpointUrl = import.meta.env.VITE_ADS_MCP_GATEWAY_URL ?? ''
-  const endpointUrl = configuredEndpointUrl.trim() || META_ADS_MCP_SERVER
+  const endpointUrl = configuredEndpointUrl.trim() || META_ADS_MCP_RELAY
   const appId = import.meta.env.VITE_FACEBOOK_APP_ID ?? ''
   const graphVersion = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION ?? 'v26.0'
 
@@ -1288,11 +1289,19 @@ async function postAdsMcpRpc<T>(
   body: Record<string, unknown>,
   sessionId?: string | null,
 ): Promise<{ response: McpJsonRpcResponse<T>; sessionId: string | null }> {
-  const httpResponse = await fetch(getAdsMcpEndpoint(gateway), {
-    method: 'POST',
-    headers: buildAdsMcpHeaders(gateway, sessionId),
-    body: JSON.stringify(body),
-  })
+  let httpResponse: Response
+  try {
+    httpResponse = await fetch(getAdsMcpEndpoint(gateway), {
+      method: 'POST',
+      headers: buildAdsMcpHeaders(gateway, sessionId),
+      body: JSON.stringify(body),
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Ads MCP relay 無法連線：${message}. 請確認目前 endpoint 是可跨網域的 relay，而不是瀏覽器直連 Meta MCP。`,
+    )
+  }
   const text = await httpResponse.text()
   const parsed = safeJsonParse<McpJsonRpcResponse<T>>(text)
 

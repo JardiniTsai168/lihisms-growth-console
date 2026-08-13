@@ -27,7 +27,7 @@ npm run build
 ```bash
 VITE_FACEBOOK_APP_ID=your_meta_app_id
 VITE_FACEBOOK_GRAPH_VERSION=v26.0
-VITE_ADS_MCP_GATEWAY_URL=https://mcp.facebook.com/ads
+VITE_ADS_MCP_GATEWAY_URL=https://creative.bktsai.link/internal/meta-ads-mcp
 ```
 
 `VITE_FACEBOOK_APP_ID` 需要先在 Meta App Dashboard 設定合法的 OAuth redirect URI。GitHub Pages 測試站時，redirect URI 需要包含：
@@ -42,7 +42,8 @@ VITE_ADS_MCP_GATEWAY_URL=https://mcp.facebook.com/ads
   - 走 Meta OAuth implicit token flow
   - 成功後前端會用 Graph API 讀 `me/adaccounts`、`/{ad-account-id}/adspixels`、`/me/accounts`
 - `Publish via Ads MCP`
-  - 前端先對 `https://mcp.facebook.com/ads` 做 MCP `initialize`
+  - 前端先對 `https://creative.bktsai.link/internal/meta-ads-mcp` 做 MCP `initialize`
+  - relay 再轉送到 `https://mcp.facebook.com/ads`
   - 再做 `tools/list`
   - 之後依序呼叫：
     - `ads_create_campaign`
