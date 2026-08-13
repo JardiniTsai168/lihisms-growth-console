@@ -1339,8 +1339,7 @@ async function executeDirectFacebookPublish(
         name: payload.campaign.name,
         objective: mapObjectiveToMetaObjective(payload.campaign.objective),
         status: 'PAUSED',
-        special_ad_categories: 'NONE',
-        buying_type: 'AUCTION',
+        special_ad_categories: JSON.stringify(['NONE']),
       },
     )
   } catch (error) {
