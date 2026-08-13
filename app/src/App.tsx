@@ -1008,6 +1008,9 @@ function migrateAppState(state: AppState) {
   const graphVersion = storedGateway?.graphVersion?.trim()
     ? storedGateway.graphVersion
     : defaultGateway.graphVersion
+  const storedEndpointUrl = storedGateway?.endpointUrl?.trim() || ''
+  const shouldMigrateLegacyMetaEndpoint =
+    storedEndpointUrl === '' || storedEndpointUrl === META_ADS_MCP_SERVER
   const adsMcpGateway = {
     ...defaultGateway,
     ...storedGateway,
@@ -1019,8 +1022,9 @@ function migrateAppState(state: AppState) {
         : storedGateway?.mode === 'demo' && !storedGateway?.endpointUrl?.trim()
           ? defaultGateway.mode
         : (storedGateway?.mode ?? defaultGateway.mode),
-    endpointUrl:
-      storedGateway?.endpointUrl?.trim() || defaultGateway.endpointUrl,
+    endpointUrl: shouldMigrateLegacyMetaEndpoint
+      ? defaultGateway.endpointUrl
+      : storedEndpointUrl,
     accessToken: storedGateway?.accessToken ?? null,
     tokenExpiresAt: storedGateway?.tokenExpiresAt ?? null,
     grantedScopes: storedGateway?.grantedScopes ?? [],
@@ -1048,7 +1052,8 @@ function migrateAppState(state: AppState) {
     storedGateway?.lastError === undefined ||
     storedGateway?.appId !== appId ||
     storedGateway?.graphVersion !== graphVersion ||
-    adsMcpGateway.mode !== storedGateway?.mode
+    adsMcpGateway.mode !== storedGateway?.mode ||
+    adsMcpGateway.endpointUrl !== storedEndpointUrl
   ) {
     changed = true
   }
