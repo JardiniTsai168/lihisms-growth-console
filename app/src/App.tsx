@@ -95,6 +95,43 @@ type AdsGatewayContractPreview = {
   response: AdsMcpGatewayResponse
 }
 
+type FacebookCampaignSnapshot = {
+  id: string
+  name: string
+  status: string
+  effectiveStatus: string
+  objective: string
+}
+
+type FacebookAdSetSnapshot = {
+  id: string
+  campaignId: string
+  name: string
+  status: string
+  effectiveStatus: string
+  optimizationGoal: string
+  dailyBudget: string | null
+  lifetimeBudget: string | null
+}
+
+type FacebookAdSnapshot = {
+  id: string
+  campaignId: string
+  adSetId: string
+  name: string
+  status: string
+  effectiveStatus: string
+}
+
+type FacebookAccountStructureSnapshot = {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  campaigns: FacebookCampaignSnapshot[]
+  adSets: FacebookAdSetSnapshot[]
+  ads: FacebookAdSnapshot[]
+  lastSyncedAt: string | null
+  error: string | null
+}
+
 const rejectionReasons = [
   '賣點不對',
   '文案太弱',
@@ -625,6 +662,103 @@ async function fetchFacebookPixels(gateway: AdsMcpGatewayConfig, adAccountId: st
   }))
 }
 
+async function fetchFacebookAccountStructure(
+  gateway: AdsMcpGatewayConfig,
+  adAccountId: string,
+): Promise<{
+  campaigns: FacebookCampaignSnapshot[]
+  adSets: FacebookAdSetSnapshot[]
+  ads: FacebookAdSnapshot[]
+}> {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const normalizedAdAccountId = normalizeFacebookAdAccountId(adAccountId)
+  const buildCollectionPath = (edge: 'campaigns' | 'adsets' | 'ads', fields: string) => {
+    const params = new URLSearchParams({
+      fields,
+      limit: '200',
+      access_token: gateway.accessToken!,
+    })
+    return `/${normalizedAdAccountId}/${edge}?${params.toString()}`
+  }
+
+  const [campaigns, adSets, ads] = await Promise.all([
+    fetchFacebookGraphCollection<{
+      id: string
+      name?: string
+      objective?: string
+      status?: string
+      effective_status?: string
+    }>(
+      gateway,
+      buildCollectionPath('campaigns', 'id,name,objective,status,effective_status'),
+    ),
+    fetchFacebookGraphCollection<{
+      id: string
+      name?: string
+      campaign_id?: string
+      optimization_goal?: string
+      status?: string
+      effective_status?: string
+      daily_budget?: string
+      lifetime_budget?: string
+    }>(
+      gateway,
+      buildCollectionPath(
+        'adsets',
+        'id,name,campaign_id,optimization_goal,status,effective_status,daily_budget,lifetime_budget',
+      ),
+    ),
+    fetchFacebookGraphCollection<{
+      id: string
+      name?: string
+      campaign_id?: string
+      adset_id?: string
+      status?: string
+      effective_status?: string
+    }>(
+      gateway,
+      buildCollectionPath('ads', 'id,name,campaign_id,adset_id,status,effective_status'),
+    ),
+  ])
+
+  return {
+    campaigns: campaigns
+      .map((campaign) => ({
+        id: campaign.id,
+        name: campaign.name ?? campaign.id,
+        status: campaign.status ?? 'UNKNOWN',
+        effectiveStatus: campaign.effective_status ?? campaign.status ?? 'UNKNOWN',
+        objective: campaign.objective ?? 'UNKNOWN',
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant')),
+    adSets: adSets
+      .map((adSet) => ({
+        id: adSet.id,
+        campaignId: adSet.campaign_id ?? '',
+        name: adSet.name ?? adSet.id,
+        status: adSet.status ?? 'UNKNOWN',
+        effectiveStatus: adSet.effective_status ?? adSet.status ?? 'UNKNOWN',
+        optimizationGoal: adSet.optimization_goal ?? 'UNKNOWN',
+        dailyBudget: adSet.daily_budget ?? null,
+        lifetimeBudget: adSet.lifetime_budget ?? null,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant')),
+    ads: ads
+      .map((ad) => ({
+        id: ad.id,
+        campaignId: ad.campaign_id ?? '',
+        adSetId: ad.adset_id ?? '',
+        name: ad.name ?? ad.id,
+        status: ad.status ?? 'UNKNOWN',
+        effectiveStatus: ad.effective_status ?? ad.status ?? 'UNKNOWN',
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant')),
+  }
+}
+
 function buildAdsMcpGatewayRequest(payload: AdsMcpPayloadPreview): AdsMcpGatewayRequest {
   return {
     server: META_ADS_MCP_SERVER,
@@ -1086,6 +1220,7 @@ function App() {
   const [persistedState, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
   const state = useMemo(() => migrateAppState(persistedState), [persistedState])
   const reviewSectionRef = useRef<HTMLElement | null>(null)
+  const structureSectionRef = useRef<HTMLDivElement | null>(null)
   const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(buildEmptyForm)
@@ -1101,12 +1236,36 @@ function App() {
   const [publishStatusMessage, setPublishStatusMessage] = useState<string | null>(null)
   const [isConnectingFacebook, setIsConnectingFacebook] = useState(false)
   const [adAccountQuery, setAdAccountQuery] = useState('')
+  const [accountStructureSnapshot, setAccountStructureSnapshot] =
+    useState<FacebookAccountStructureSnapshot>({
+      status: 'idle',
+      campaigns: [],
+      adSets: [],
+      ads: [],
+      lastSyncedAt: null,
+      error: null,
+    })
+  const [selectedCampaignId, setSelectedCampaignId] = useState('')
+  const [selectedAdSetId, setSelectedAdSetId] = useState('')
+  const [structureRefreshKey, setStructureRefreshKey] = useState(0)
+
+  const jumpToStructureSection = () => {
+    structureSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   useEffect(() => {
     if (state !== persistedState) {
       setState(state)
     }
   }, [persistedState, setState, state])
+
+  useEffect(() => {
+    if (accountStructureSnapshot.status !== 'ready') {
+      return
+    }
+
+    jumpToStructureSection()
+  }, [accountStructureSnapshot.status])
 
   useEffect(() => {
     const oauthResult = parseOauthHash(window.location.hash)
@@ -1282,6 +1441,91 @@ function App() {
     }
   }, [setState, state.adsMcpGateway])
 
+  useEffect(() => {
+    if (
+      state.adsMcpGateway.connectionStatus !== 'connected' ||
+      !state.adsMcpGateway.accessToken ||
+      !state.adsMcpGateway.adAccountId
+    ) {
+      setAccountStructureSnapshot({
+        status: 'idle',
+        campaigns: [],
+        adSets: [],
+        ads: [],
+        lastSyncedAt: null,
+        error: null,
+      })
+      setSelectedCampaignId('')
+      setSelectedAdSetId('')
+      return
+    }
+
+    let cancelled = false
+
+    setAccountStructureSnapshot((current) => ({
+      ...current,
+      status: 'loading',
+      error: null,
+    }))
+
+    const run = async () => {
+      try {
+        const snapshot = await fetchFacebookAccountStructure(
+          state.adsMcpGateway,
+          state.adsMcpGateway.adAccountId,
+        )
+
+        if (cancelled) {
+          return
+        }
+
+        const lastSyncedAt = new Date().toISOString()
+        setAccountStructureSnapshot({
+          status: 'ready',
+          campaigns: snapshot.campaigns,
+          adSets: snapshot.adSets,
+          ads: snapshot.ads,
+          lastSyncedAt,
+          error: null,
+        })
+        setSelectedCampaignId((current) =>
+          snapshot.campaigns.some((campaign) => campaign.id === current)
+            ? current
+            : snapshot.campaigns[0]?.id ?? '',
+        )
+        setSelectedAdSetId((current) =>
+          snapshot.adSets.some((adSet) => adSet.id === current) ? current : '',
+        )
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setAccountStructureSnapshot({
+          status: 'error',
+          campaigns: [],
+          adSets: [],
+          ads: [],
+          lastSyncedAt: null,
+          error:
+            error instanceof Error ? error.message : 'Failed to fetch Facebook account structure.',
+        })
+      }
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    state.adsMcpGateway.accessToken,
+    state.adsMcpGateway.adAccountId,
+    state.adsMcpGateway.connectionStatus,
+    state.adsMcpGateway.graphVersion,
+    structureRefreshKey,
+  ])
+
   const activeLibrary = state.library.filter((record) => record.status === 'active')
   const latestBatch = state.batches[0]
 
@@ -1374,6 +1618,47 @@ function App() {
     state.adsMcpGateway.adAccountId,
     state.adsMcpGateway.availableAdAccounts,
   ])
+  const activeCampaignId = useMemo(() => {
+    if (accountStructureSnapshot.campaigns.some((campaign) => campaign.id === selectedCampaignId)) {
+      return selectedCampaignId
+    }
+
+    return accountStructureSnapshot.campaigns[0]?.id ?? ''
+  }, [accountStructureSnapshot.campaigns, selectedCampaignId])
+  const campaignScopedAdSets = useMemo(() => {
+    return accountStructureSnapshot.adSets.filter((adSet) => adSet.campaignId === activeCampaignId)
+  }, [accountStructureSnapshot.adSets, activeCampaignId])
+  const activeAdSetId = useMemo(() => {
+    if (campaignScopedAdSets.some((adSet) => adSet.id === selectedAdSetId)) {
+      return selectedAdSetId
+    }
+
+    return campaignScopedAdSets[0]?.id ?? ''
+  }, [campaignScopedAdSets, selectedAdSetId])
+  const adSetScopedAds = useMemo(() => {
+    return accountStructureSnapshot.ads.filter((ad) => ad.adSetId === activeAdSetId)
+  }, [accountStructureSnapshot.ads, activeAdSetId])
+  const campaignStats = useMemo(() => {
+    return new Map(
+      accountStructureSnapshot.campaigns.map((campaign) => [
+        campaign.id,
+        {
+          adSetCount: accountStructureSnapshot.adSets.filter(
+            (adSet) => adSet.campaignId === campaign.id,
+          ).length,
+          adCount: accountStructureSnapshot.ads.filter((ad) => ad.campaignId === campaign.id).length,
+        },
+      ]),
+    )
+  }, [accountStructureSnapshot.adSets, accountStructureSnapshot.ads, accountStructureSnapshot.campaigns])
+  const adSetStats = useMemo(() => {
+    return new Map(
+      campaignScopedAdSets.map((adSet) => [
+        adSet.id,
+        accountStructureSnapshot.ads.filter((ad) => ad.adSetId === adSet.id).length,
+      ]),
+    )
+  }, [accountStructureSnapshot.ads, campaignScopedAdSets])
   const publishableDrafts = state.drafts.filter(
     (draft) => draft.status === 'ready_to_publish' || draft.status === 'publishing',
   )
@@ -3043,6 +3328,23 @@ function App() {
                   >
                     Disconnect
                   </button>
+                  <button
+                    type="button"
+                    className="mini-button"
+                    onClick={() => setStructureRefreshKey((current) => current + 1)}
+                    disabled={accountStructureSnapshot.status === 'loading'}
+                  >
+                    {accountStructureSnapshot.status === 'loading'
+                      ? 'Syncing structure…'
+                      : 'Refresh structure'}
+                  </button>
+                  <button
+                    type="button"
+                    className="mini-button"
+                    onClick={jumpToStructureSection}
+                  >
+                    Jump to structure
+                  </button>
                 </>
               )}
             </div>
@@ -3115,6 +3417,147 @@ function App() {
           {publishStatusMessage ? <div className="status-banner">{publishStatusMessage}</div> : null}
           {state.adsMcpGateway.lastError ? (
             <div className="error-banner">{state.adsMcpGateway.lastError}</div>
+          ) : null}
+          {state.adsMcpGateway.connectionStatus === 'connected' ? (
+            <div ref={structureSectionRef} className="account-structure-panel">
+              <div className="panel-header compact">
+                <div>
+                  <p className="eyebrow">live structure</p>
+                  <h3>Live Campaign / Ad set / Ad snapshot</h3>
+                  <p className="helper-copy">選完 ad account 後，這裡會直接顯示目前帳號底下的投放結構。</p>
+                </div>
+                <span className="pill muted">{accountStructureSnapshot.status}</span>
+              </div>
+
+              <div className="builder-flow">
+                <span>{accountStructureSnapshot.campaigns.length} campaigns</span>
+                <span>{accountStructureSnapshot.adSets.length} ad sets</span>
+                <span>{accountStructureSnapshot.ads.length} ads</span>
+                <span>
+                  Last sync:{' '}
+                  {accountStructureSnapshot.lastSyncedAt
+                    ? formatDate(accountStructureSnapshot.lastSyncedAt)
+                    : 'none'}
+                </span>
+              </div>
+
+              {accountStructureSnapshot.error ? (
+                <div className="error-banner">{accountStructureSnapshot.error}</div>
+              ) : null}
+
+              {accountStructureSnapshot.status === 'ready' &&
+              accountStructureSnapshot.campaigns.length > 0 ? (
+                <div className="account-structure-grid">
+                  <article className="structure-card">
+                    <div className="structure-card-header">
+                      <h4>Campaigns</h4>
+                      <span className="pill muted">{accountStructureSnapshot.campaigns.length}</span>
+                    </div>
+                    <div className="structure-list">
+                      {accountStructureSnapshot.campaigns.map((campaign) => {
+                        const stats = campaignStats.get(campaign.id)
+                        return (
+                          <button
+                            key={campaign.id}
+                            type="button"
+                            className={`structure-row ${
+                              campaign.id === activeCampaignId ? 'selected' : ''
+                            }`}
+                            onClick={() => {
+                              setSelectedCampaignId(campaign.id)
+                              setSelectedAdSetId('')
+                            }}
+                          >
+                            <strong>{campaign.name}</strong>
+                            <span>{campaign.objective}</span>
+                            <span>
+                              {campaign.status} / {campaign.effectiveStatus}
+                            </span>
+                            <span>
+                              {stats?.adSetCount ?? 0} ad sets · {stats?.adCount ?? 0} ads
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </article>
+
+                  <article className="structure-card">
+                    <div className="structure-card-header">
+                      <h4>Ad sets</h4>
+                      <span className="pill muted">{campaignScopedAdSets.length}</span>
+                    </div>
+                    {campaignScopedAdSets.length === 0 ? (
+                      <article className="creative-empty-state compact">
+                        <h3>這個 campaign 目前沒有 ad set</h3>
+                        <p>可以先切別的 campaign，或按 `Refresh structure` 再抓一次。</p>
+                      </article>
+                    ) : (
+                      <div className="structure-list">
+                        {campaignScopedAdSets.map((adSet) => (
+                          <button
+                            key={adSet.id}
+                            type="button"
+                            className={`structure-row ${adSet.id === activeAdSetId ? 'selected' : ''}`}
+                            onClick={() => setSelectedAdSetId(adSet.id)}
+                          >
+                            <strong>{adSet.name}</strong>
+                            <span>{adSet.optimizationGoal}</span>
+                            <span>
+                              {adSet.status} / {adSet.effectiveStatus}
+                            </span>
+                            <span>
+                              Budget:{' '}
+                              {adSet.dailyBudget
+                                ? `daily ${adSet.dailyBudget}`
+                                : adSet.lifetimeBudget
+                                  ? `lifetime ${adSet.lifetimeBudget}`
+                                  : 'not set'}
+                            </span>
+                            <span>{adSetStats.get(adSet.id) ?? 0} ads</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+
+                  <article className="structure-card">
+                    <div className="structure-card-header">
+                      <h4>Ads</h4>
+                      <span className="pill muted">{adSetScopedAds.length}</span>
+                    </div>
+                    {adSetScopedAds.length === 0 ? (
+                      <article className="creative-empty-state compact">
+                        <h3>這個 ad set 目前沒有 ad</h3>
+                        <p>如果剛建立或剛 paused，先 refresh；有資料就會出現在這裡。</p>
+                      </article>
+                    ) : (
+                      <div className="structure-list">
+                        {adSetScopedAds.map((ad) => (
+                          <div key={ad.id} className="structure-row static">
+                            <strong>{ad.name}</strong>
+                            <span>
+                              {ad.status} / {ad.effectiveStatus}
+                            </span>
+                            <span>ID: {ad.id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                </div>
+              ) : accountStructureSnapshot.status === 'loading' ? (
+                <article className="creative-empty-state compact">
+                  <h3>正在抓 account structure</h3>
+                  <p>系統會直接從目前選到的 ad account 拉 campaigns、ad sets、ads。</p>
+                </article>
+              ) : (
+                <article className="creative-empty-state compact">
+                  <h3>這個 ad account 還沒有可顯示的投放結構</h3>
+                  <p>如果你確定帳號內有資料，按 `Refresh structure` 再抓一次。</p>
+                </article>
+              )}
+            </div>
           ) : null}
 
           <div className="api-spec-grid">

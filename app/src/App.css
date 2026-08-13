@@ -448,6 +448,11 @@ textarea {
   margin-top: 10px;
 }
 
+.creative-empty-state.compact {
+  padding: 16px;
+  border-radius: 18px;
+}
+
 .loading-state {
   min-height: 180px;
   align-content: center;
@@ -718,6 +723,100 @@ textarea {
   margin-top: 18px;
 }
 
+.account-structure-panel {
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 24px;
+  background: color-mix(in oklch, var(--panel-alt) 84%, white 16%);
+  border: 1px solid color-mix(in oklch, var(--line) 86%, transparent 14%);
+}
+
+.panel-header.compact {
+  margin-bottom: 14px;
+}
+
+.panel-header.compact h3 {
+  margin: 4px 0 0;
+}
+
+.account-structure-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.structure-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  min-height: 280px;
+}
+
+.structure-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.structure-card-header h4 {
+  margin: 0;
+}
+
+.structure-list {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.structure-row {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  background: color-mix(in oklch, white 80%, var(--panel-alt) 20%);
+  color: var(--ink);
+}
+
+button.structure-row {
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+button.structure-row:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklch, var(--brand) 34%, white 66%);
+}
+
+.structure-row.selected {
+  background: color-mix(in oklch, var(--brand-soft) 74%, white 26%);
+  border-color: color-mix(in oklch, var(--brand) 42%, white 58%);
+}
+
+.structure-row.static {
+  cursor: default;
+}
+
+.structure-row strong,
+.structure-row span {
+  margin: 0;
+}
+
+.structure-row span {
+  color: rgba(26, 26, 94, 0.74);
+  font-size: 0.82rem;
+}
+
 .publish-asset-list {
   display: flex;
   flex-wrap: wrap;
@@ -891,7 +990,8 @@ textarea {
   .creative-grid,
   .recommendation-grid,
   .asset-grid,
-  .api-spec-grid {
+  .api-spec-grid,
+  .account-structure-grid {
     grid-template-columns: 1fr;
   }
 
