@@ -1618,6 +1618,15 @@ function App() {
     state.adsMcpGateway.adAccountId,
     state.adsMcpGateway.availableAdAccounts,
   ])
+  const selectedAdAccount = useMemo(() => {
+    const normalizedSelectedAdAccountId = normalizeFacebookAdAccountId(state.adsMcpGateway.adAccountId)
+    return state.adsMcpGateway.availableAdAccounts.find(
+      (account) => account.id === normalizedSelectedAdAccountId,
+    )
+  }, [state.adsMcpGateway.adAccountId, state.adsMcpGateway.availableAdAccounts])
+  const selectedPixel = useMemo(() => {
+    return state.adsMcpGateway.availablePixels.find((pixel) => pixel.id === state.adsMcpGateway.pixelId)
+  }, [state.adsMcpGateway.availablePixels, state.adsMcpGateway.pixelId])
   const activeCampaignId = useMemo(() => {
     if (accountStructureSnapshot.campaigns.some((campaign) => campaign.id === selectedCampaignId)) {
       return selectedCampaignId
@@ -3197,27 +3206,32 @@ function App() {
                   <h3>{draft.adName}</h3>
                   <p>{draft.adsetName}</p>
                   <p className="helper-copy">{draft.campaignName}</p>
-                  <div className="draft-schema">
+                  <div className="draft-overview-grid">
                     <span>Product: {draft.metadata.productName}</span>
-                    <span>Funnel: {draft.adsPlan.campaign.funnelStage}</span>
                     <span>Objective: {draft.adsPlan.campaign.objective}</span>
                     <span>Audience: {draft.adsPlan.adSet.audienceType}</span>
-                    <span>
-                      Window:{' '}
-                      {draft.adsPlan.adSet.audienceWindowDays
-                        ? `${draft.adsPlan.adSet.audienceWindowDays}D`
-                        : 'none'}
-                    </span>
-                    <span>Budget: {draft.adsPlan.adSet.budgetStrategy}</span>
                     <span>Optimize for: {draft.adsPlan.adSet.optimizationGoal}</span>
-                    <span>Placement: {draft.adsPlan.adSet.placementStrategy}</span>
-                    <span>Angle family: {draft.adsPlan.ad.angleFamily}</span>
-                    <span>Angle: {draft.adsPlan.ad.angleLabel}</span>
-                    <span>Primary text: {draft.primaryText}</span>
-                    <span>Headline: {draft.headline}</span>
-                    <span>Description: {draft.description}</span>
-                    <span>URL: {draft.destinationUrl}</span>
                   </div>
+                  <details className="inline-details">
+                    <summary>看投放設定與文案</summary>
+                    <div className="draft-schema">
+                      <span>Funnel: {draft.adsPlan.campaign.funnelStage}</span>
+                      <span>
+                        Window:{' '}
+                        {draft.adsPlan.adSet.audienceWindowDays
+                          ? `${draft.adsPlan.adSet.audienceWindowDays}D`
+                          : 'none'}
+                      </span>
+                      <span>Budget: {draft.adsPlan.adSet.budgetStrategy}</span>
+                      <span>Placement: {draft.adsPlan.adSet.placementStrategy}</span>
+                      <span>Angle family: {draft.adsPlan.ad.angleFamily}</span>
+                      <span>Angle: {draft.adsPlan.ad.angleLabel}</span>
+                      <span>Primary text: {draft.primaryText}</span>
+                      <span>Headline: {draft.headline}</span>
+                      <span>Description: {draft.description}</span>
+                      <span>URL: {draft.destinationUrl}</span>
+                    </div>
+                  </details>
                 </div>
                 <div className="draft-actions">
                   <span className="pill active">{draft.metadata.angleId}</span>
@@ -3282,7 +3296,7 @@ function App() {
           <div className="panel-header">
             <div>
               <p className="eyebrow">07 / Ads MCP gateway</p>
-              <h2>Facebook connection</h2>
+              <h2>Facebook delivery setup</h2>
             </div>
             <span className="pill active">{state.adsMcpGateway.connectionStatus}</span>
           </div>
@@ -3297,7 +3311,7 @@ function App() {
               </h3>
               <p className="helper-copy">
                 {state.adsMcpGateway.connectionStatus === 'connected'
-                  ? '系統已抓回這個 Facebook Login 可用的 ad account 與 pixel，接下來只要挑選要投放的組合。'
+                  ? '先選 ad account 與 pixel，再往下看 live structure。'
                   : '按下後會直接跳 Meta OAuth；授權完成後，系統會自動抓回可用的 ad account 與 pixel。'}
               </p>
             </div>
@@ -3351,68 +3365,68 @@ function App() {
           </div>
 
           {state.adsMcpGateway.connectionStatus === 'connected' ? (
-            <div className="gateway-grid">
-              <label className="rule-field">
-                <span>Ad account</span>
-                <input
-                  type="search"
-                  placeholder="搜尋帳號名稱或 ID，例如 lihi.io / 415404632649857"
-                  value={adAccountQuery}
-                  onChange={(event) => setAdAccountQuery(event.target.value)}
-                />
-                <select
-                  value={state.adsMcpGateway.adAccountId}
-                  onChange={(event) => void selectFacebookAdAccount(event.target.value)}
-                >
-                  {visibleAdAccounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name} · {account.currency} · {account.accountId}
-                    </option>
-                  ))}
-                </select>
-                <small>
-                  顯示 {filteredAdAccounts.length} / {state.adsMcpGateway.availableAdAccounts.length} 個 ad
-                  account
-                </small>
-                <details>
-                  <summary>Account diagnostics</summary>
+            <div className="gateway-stack">
+              <div className="gateway-overview-grid">
+                <article className="overview-card">
+                  <span>目前帳號</span>
+                  <strong>
+                    {selectedAdAccount
+                      ? `${selectedAdAccount.name} · ${selectedAdAccount.accountId}`
+                      : '尚未選擇'}
+                  </strong>
+                </article>
+                <article className="overview-card">
+                  <span>目前 pixel</span>
+                  <strong>{selectedPixel ? selectedPixel.name : '尚未選擇'}</strong>
+                </article>
+                <article className="overview-card">
+                  <span>可用資產</span>
+                  <strong>
+                    {state.adsMcpGateway.availableAdAccounts.length} accounts ·{' '}
+                    {state.adsMcpGateway.availablePixels.length} pixels
+                  </strong>
+                </article>
+              </div>
+
+              <div className="gateway-grid">
+                <label className="rule-field">
+                  <span>Ad account</span>
+                  <input
+                    type="search"
+                    placeholder="搜尋帳號名稱或 ID，例如 lihi.io / 415404632649857"
+                    value={adAccountQuery}
+                    onChange={(event) => setAdAccountQuery(event.target.value)}
+                  />
+                  <select
+                    value={state.adsMcpGateway.adAccountId}
+                    onChange={(event) => void selectFacebookAdAccount(event.target.value)}
+                  >
+                    {visibleAdAccounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name} · {account.currency} · {account.accountId}
+                      </option>
+                    ))}
+                  </select>
                   <small>
-                    {state.adsMcpGateway.availableAdAccounts
-                      .map((account) => `${account.name} (${account.accountId})`)
-                      .join(' | ')}
+                    顯示 {filteredAdAccounts.length} / {state.adsMcpGateway.availableAdAccounts.length} 個
                   </small>
-                </details>
-              </label>
-              <label className="rule-field">
-                <span>Pixel</span>
-                <select
-                  value={state.adsMcpGateway.pixelId}
-                  onChange={(event) => updateAdsMcpGateway({ pixelId: event.target.value })}
-                >
-                  {state.adsMcpGateway.availablePixels.map((pixel) => (
-                    <option key={pixel.id} value={pixel.id}>
-                      {pixel.name} · {pixel.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                </label>
+                <label className="rule-field">
+                  <span>Pixel</span>
+                  <select
+                    value={state.adsMcpGateway.pixelId}
+                    onChange={(event) => updateAdsMcpGateway({ pixelId: event.target.value })}
+                  >
+                    {state.adsMcpGateway.availablePixels.map((pixel) => (
+                      <option key={pixel.id} value={pixel.id}>
+                        {pixel.name} · {pixel.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
           ) : null}
-
-          <div className="builder-flow">
-            <span>Connection mode: {state.adsMcpGateway.mode}</span>
-            <span>Graph API: {state.adsMcpGateway.graphVersion}</span>
-            <span>Meta Ads MCP server: {META_ADS_MCP_SERVER}</span>
-            <span>
-              Last success:{' '}
-              {state.adsMcpGateway.lastValidatedAt
-                ? formatDate(state.adsMcpGateway.lastValidatedAt)
-                : 'none'}
-            </span>
-            {state.adsMcpGateway.tokenExpiresAt ? (
-              <span>Token expires: {formatDate(state.adsMcpGateway.tokenExpiresAt)}</span>
-            ) : null}
-          </div>
 
           {publishStatusMessage ? <div className="status-banner">{publishStatusMessage}</div> : null}
           {state.adsMcpGateway.lastError ? (
@@ -3423,8 +3437,8 @@ function App() {
               <div className="panel-header compact">
                 <div>
                   <p className="eyebrow">live structure</p>
-                  <h3>Live Campaign / Ad set / Ad snapshot</h3>
-                  <p className="helper-copy">選完 ad account 後，這裡會直接顯示目前帳號底下的投放結構。</p>
+                  <h3>Live campaign structure</h3>
+                  <p className="helper-copy">主畫面只留目前帳號的 campaign、ad set、ad，方便直接查看。</p>
                 </div>
                 <span className="pill muted">{accountStructureSnapshot.status}</span>
               </div>
@@ -3560,42 +3574,69 @@ function App() {
             </div>
           ) : null}
 
-          <div className="api-spec-grid">
-            <article className="api-spec-card">
-              <h3>Remote gateway contract</h3>
-              <p>POST 你的 gateway endpoint，body 必須吃 `server + operation + payload`。</p>
-            </article>
-            <article className="api-spec-card">
-              <h3>Required response</h3>
-              <p>回 `requestId`、`campaignId`、`adSetId`、`adId`，前端才會回寫 published。</p>
-            </article>
-            <article className="api-spec-card">
-              <h3>Failure behavior</h3>
-              <p>非 2xx 或 JSON 不完整時，draft 會進 `failed`，並保留錯誤訊息。</p>
-            </article>
-          </div>
+          <details className="advanced-panel">
+            <summary>進階連線與 gateway 資訊</summary>
+            <div className="builder-flow">
+              <span>Connection mode: {state.adsMcpGateway.mode}</span>
+              <span>Graph API: {state.adsMcpGateway.graphVersion}</span>
+              <span>Meta Ads MCP server: {META_ADS_MCP_SERVER}</span>
+              <span>
+                Last success:{' '}
+                {state.adsMcpGateway.lastValidatedAt
+                  ? formatDate(state.adsMcpGateway.lastValidatedAt)
+                  : 'none'}
+              </span>
+              {state.adsMcpGateway.tokenExpiresAt ? (
+                <span>Token expires: {formatDate(state.adsMcpGateway.tokenExpiresAt)}</span>
+              ) : null}
+            </div>
 
-          {gatewayContractPreview ? (
-            <div className="gateway-contract-grid">
-              <article>
-                <p className="eyebrow">request</p>
-                <pre className="payload-preview">
-                  {JSON.stringify(gatewayContractPreview.request, null, 2)}
-                </pre>
+            <details className="inline-details">
+              <summary>Account diagnostics</summary>
+              <small>
+                {state.adsMcpGateway.availableAdAccounts
+                  .map((account) => `${account.name} (${account.accountId})`)
+                  .join(' | ')}
+              </small>
+            </details>
+
+            <div className="api-spec-grid">
+              <article className="api-spec-card">
+                <h3>Remote gateway contract</h3>
+                <p>POST 你的 gateway endpoint，body 必須吃 `server + operation + payload`。</p>
               </article>
-              <article>
-                <p className="eyebrow">expected response</p>
-                <pre className="payload-preview">
-                  {JSON.stringify(gatewayContractPreview.response, null, 2)}
-                </pre>
+              <article className="api-spec-card">
+                <h3>Required response</h3>
+                <p>回 `requestId`、`campaignId`、`adSetId`、`adId`，前端才會回寫 published。</p>
+              </article>
+              <article className="api-spec-card">
+                <h3>Failure behavior</h3>
+                <p>非 2xx 或 JSON 不完整時，draft 會進 `failed`，並保留錯誤訊息。</p>
               </article>
             </div>
-          ) : (
-            <article className="creative-empty-state">
-              <h3>還沒有 contract sample</h3>
-              <p>先把 draft prepare 成 ready_to_publish，這裡就會自動帶出 gateway request sample。</p>
-            </article>
-          )}
+
+            {gatewayContractPreview ? (
+              <div className="gateway-contract-grid">
+                <article>
+                  <p className="eyebrow">request</p>
+                  <pre className="payload-preview">
+                    {JSON.stringify(gatewayContractPreview.request, null, 2)}
+                  </pre>
+                </article>
+                <article>
+                  <p className="eyebrow">expected response</p>
+                  <pre className="payload-preview">
+                    {JSON.stringify(gatewayContractPreview.response, null, 2)}
+                  </pre>
+                </article>
+              </div>
+            ) : (
+              <article className="creative-empty-state compact">
+                <h3>還沒有 contract sample</h3>
+                <p>先把 draft prepare 成 ready_to_publish，這裡就會自動帶出 gateway request sample。</p>
+              </article>
+            )}
+          </details>
         </section>
 
         <section className="panel span-two">
@@ -3621,26 +3662,12 @@ function App() {
                     <h3>{draft.publishBundle.adPayload.name}</h3>
                     <p>{draft.publishBundle.adSetPayload.name}</p>
                     <p className="helper-copy">{draft.publishBundle.campaignPayload.name}</p>
-                  </div>
-
-                  <div className="draft-schema">
-                    <span>Objective: {draft.publishBundle.campaignPayload.objective}</span>
-                    <span>Audience: {draft.publishBundle.adSetPayload.audienceType}</span>
-                    <span>MCP server: {draft.publishBundle.adsMcpPayload.server}</span>
-                    <span>MCP version: {draft.publishBundle.adsMcpPayload.version}</span>
-                    <span>Gateway mode: {draft.publishBundle.adsMcpPayload.connection.mode}</span>
-                    <span>Ad account: {draft.publishBundle.adsMcpPayload.connection.adAccountId}</span>
-                    <span>Primary text: {draft.publishBundle.copyPayload.primaryText}</span>
-                    <span>Headline: {draft.publishBundle.copyPayload.headline}</span>
-                    <span>Description: {draft.publishBundle.copyPayload.description}</span>
-                    <span>URL: {draft.publishBundle.copyPayload.destinationUrl}</span>
-                    <span>
-                      Checklist:
-                      {draft.publishBundle.checklist.hasCopy ? ' copy' : ''}
-                      {draft.publishBundle.checklist.hasDestinationUrl ? ' url' : ''}
-                      {draft.publishBundle.checklist.hasSelectedAssets ? ' assets' : ''}
-                      {draft.publishBundle.checklist.hasMetaAsset ? ' meta' : ''}
-                    </span>
+                    <div className="draft-overview-grid">
+                      <span>Objective: {draft.publishBundle.campaignPayload.objective}</span>
+                      <span>Audience: {draft.publishBundle.adSetPayload.audienceType}</span>
+                      <span>Gateway: {draft.publishBundle.adsMcpPayload.connection.mode}</span>
+                      <span>Ad account: {draft.publishBundle.adsMcpPayload.connection.adAccountId}</span>
+                    </div>
                   </div>
 
                   <div className="publish-asset-list">
@@ -3671,9 +3698,27 @@ function App() {
                     ) : null}
                   </div>
 
-                  <pre className="payload-preview">
-                    {JSON.stringify(draft.publishBundle.adsMcpPayload, null, 2)}
-                  </pre>
+                  <details className="inline-details">
+                    <summary>看 bundle 明細與 payload</summary>
+                    <div className="draft-schema">
+                      <span>MCP server: {draft.publishBundle.adsMcpPayload.server}</span>
+                      <span>MCP version: {draft.publishBundle.adsMcpPayload.version}</span>
+                      <span>Primary text: {draft.publishBundle.copyPayload.primaryText}</span>
+                      <span>Headline: {draft.publishBundle.copyPayload.headline}</span>
+                      <span>Description: {draft.publishBundle.copyPayload.description}</span>
+                      <span>URL: {draft.publishBundle.copyPayload.destinationUrl}</span>
+                      <span>
+                        Checklist:
+                        {draft.publishBundle.checklist.hasCopy ? ' copy' : ''}
+                        {draft.publishBundle.checklist.hasDestinationUrl ? ' url' : ''}
+                        {draft.publishBundle.checklist.hasSelectedAssets ? ' assets' : ''}
+                        {draft.publishBundle.checklist.hasMetaAsset ? ' meta' : ''}
+                      </span>
+                    </div>
+                    <pre className="payload-preview">
+                      {JSON.stringify(draft.publishBundle.adsMcpPayload, null, 2)}
+                    </pre>
+                  </details>
                 </article>
               ))}
             </div>

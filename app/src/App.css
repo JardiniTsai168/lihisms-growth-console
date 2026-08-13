@@ -692,7 +692,39 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.gateway-stack {
+  display: grid;
+  gap: 16px;
   margin-bottom: 18px;
+}
+
+.gateway-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.overview-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+}
+
+.overview-card span {
+  font-size: 0.76rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(26, 26, 94, 0.58);
+}
+
+.overview-card strong {
+  font-size: 0.95rem;
+  color: var(--brand-deep);
 }
 
 .gateway-auth-card {
@@ -720,7 +752,7 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .account-structure-panel {
@@ -817,6 +849,55 @@ button.structure-row:hover {
   font-size: 0.82rem;
 }
 
+.advanced-panel,
+.inline-details {
+  border-radius: 20px;
+  background: color-mix(in oklch, var(--panel-alt) 80%, white 20%);
+  border: 1px solid color-mix(in oklch, var(--line) 86%, transparent 14%);
+}
+
+.advanced-panel {
+  padding: 14px 16px;
+}
+
+.inline-details {
+  margin-top: 12px;
+  padding: 12px 14px;
+}
+
+.advanced-panel summary,
+.inline-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--brand-deep);
+}
+
+.advanced-panel[open],
+.inline-details[open] {
+  background: color-mix(in oklch, var(--panel-alt) 84%, white 16%);
+}
+
+.advanced-panel > *:not(summary),
+.inline-details > *:not(summary) {
+  margin-top: 12px;
+}
+
+.draft-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.draft-overview-grid span {
+  padding: 9px 11px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid color-mix(in oklch, var(--line) 88%, transparent 12%);
+  color: rgba(26, 26, 94, 0.78);
+  font-size: 0.82rem;
+}
+
 .publish-asset-list {
   display: flex;
   flex-wrap: wrap;
@@ -842,7 +923,7 @@ button.structure-row:hover {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 18px;
+  margin-top: 12px;
 }
 
 .api-spec-card,
@@ -991,7 +1072,9 @@ button.structure-row:hover {
   .recommendation-grid,
   .asset-grid,
   .api-spec-grid,
-  .account-structure-grid {
+  .account-structure-grid,
+  .gateway-overview-grid,
+  .draft-overview-grid {
     grid-template-columns: 1fr;
   }
 
