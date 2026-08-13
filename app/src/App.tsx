@@ -1495,6 +1495,7 @@ function shapeValueForSchema(value: unknown, schema: unknown): unknown {
 function buildArgsFromSchema(
   tool: McpToolDefinition | undefined,
   candidates: Record<string, unknown>,
+  extraAllowedFields: string[] = [],
 ) {
   if (!tool?.inputSchema?.properties) {
     return candidates
@@ -1518,11 +1519,16 @@ function buildArgsFromSchema(
     }
   }
 
-  // Meta Ads MCP schemas have been incomplete in practice; keep known extra
-  // fields when we have a concrete value so required runtime parameters are not
-  // silently dropped before the tool call.
-  for (const [propertyName, propertyValue] of Object.entries(candidates)) {
-    if (args[propertyName] !== undefined || propertyValue === undefined) {
+  // Some Meta Ads MCP tools accept runtime fields that are missing from the
+  // advertised schema. Allow only explicit opt-in extras to avoid sending
+  // unknown arguments to stricter tools such as ads_create_campaign.
+  for (const propertyName of extraAllowedFields) {
+    if (!Object.prototype.hasOwnProperty.call(candidates, propertyName)) {
+      continue
+    }
+
+    const propertyValue = candidates[propertyName]
+    if (propertyValue === undefined || args[propertyName] !== undefined) {
       continue
     }
 
@@ -1771,7 +1777,7 @@ async function executeAdsMcpPublish(
     },
     selected_platforms: payload.creative.selectedPlatforms,
     destination_url: payload.creative.destinationUrl,
-  })
+  }, ['regional_regulated_categories'])
   const adSetResult = await callAdsMcpTool(gateway, sessionId, adSetTool.name, adSetArgs)
   const adSetData = extractMcpStructuredData(adSetResult)
   const createdAdSetId = requireMetaEntityId(
