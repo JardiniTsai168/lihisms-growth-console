@@ -1310,6 +1310,7 @@ async function postAdsMcpRpc<T>(
   gateway: AdsMcpGatewayConfig,
   body: Record<string, unknown>,
   sessionId?: string | null,
+  options?: { allowEmptyResponse?: boolean },
 ): Promise<{ response: McpJsonRpcResponse<T>; sessionId: string | null }> {
   let httpResponse: Response
   try {
@@ -1341,6 +1342,13 @@ async function postAdsMcpRpc<T>(
     throw new Error(
       metaError?.detail || metaError?.title || text || `Ads MCP request failed with ${httpResponse.status}`,
     )
+  }
+
+  if (!text.trim() && (options?.allowEmptyResponse || httpResponse.status === 202 || httpResponse.status === 204)) {
+    return {
+      response: {},
+      sessionId: httpResponse.headers.get('mcp-session-id'),
+    }
   }
 
   if (!parsed) {
@@ -1384,6 +1392,7 @@ async function initializeAdsMcpSession(gateway: AdsMcpGatewayConfig) {
       params: {},
     },
     initialize.sessionId,
+    { allowEmptyResponse: true },
   )
 
   const toolsList = await postAdsMcpRpc<{ tools?: McpToolDefinition[] }>(
