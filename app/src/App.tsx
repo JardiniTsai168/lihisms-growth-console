@@ -1221,8 +1221,10 @@ function migrateAppState(state: AppState) {
   }
 }
 
-function mapObjectiveToMetaObjective(objective: CampaignObjective) {
-  return objective === 'leads' ? 'OUTCOME_LEADS' : 'OUTCOME_SALES'
+function getFacebookCampaignObjectiveCandidates(objective: CampaignObjective) {
+  return objective === 'leads'
+    ? ['OUTCOME_LEADS', 'LEADS']
+    : ['OUTCOME_SALES', 'SALES', 'CONVERSIONS']
 }
 
 function mapOptimizationGoalToMetaOptimizationGoal(goal: OptimizationGoal) {
@@ -1315,6 +1317,58 @@ async function postFacebookGraphForm<T>(
   return payload
 }
 
+async function createFacebookCampaignWithFallbacks(
+  gateway: AdsMcpGatewayConfig,
+  adAccountId: string,
+  payload: AdsMcpPayloadPreview,
+): Promise<{ campaign: { id: string }; debug: string }> {
+  const attempts = getFacebookCampaignObjectiveCandidates(payload.campaign.objective).flatMap(
+    (objective) => [
+      {
+        label: `${objective} + ["NONE"]`,
+        fields: {
+          name: payload.campaign.name,
+          objective,
+          status: 'PAUSED',
+          special_ad_categories: JSON.stringify(['NONE']),
+        },
+      },
+      {
+        label: `${objective} + []`,
+        fields: {
+          name: payload.campaign.name,
+          objective,
+          status: 'PAUSED',
+          special_ad_categories: JSON.stringify([]),
+        },
+      },
+    ],
+  )
+
+  const errors: string[] = []
+
+  for (const attempt of attempts) {
+    try {
+      const campaign = await postFacebookGraphForm<{ id: string }>(
+        gateway,
+        `/${adAccountId}/campaigns`,
+        attempt.fields,
+      )
+
+      return {
+        campaign,
+        debug: JSON.stringify({ attempt: attempt.label, fields: attempt.fields }, null, 2),
+      }
+    } catch (error) {
+      errors.push(
+        `${attempt.label}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      )
+    }
+  }
+
+  throw new Error(errors.join(' | '))
+}
+
 async function executeDirectFacebookPublish(
   gateway: AdsMcpGatewayConfig,
   payload: AdsMcpPayloadPreview,
@@ -1331,17 +1385,15 @@ async function executeDirectFacebookPublish(
   }
 
   let campaign: { id: string }
+  let campaignDebug = ''
   try {
-    campaign = await postFacebookGraphForm<{ id: string }>(
+    const campaignResult = await createFacebookCampaignWithFallbacks(
       gateway,
-      `/${normalizedAdAccountId}/campaigns`,
-      {
-        name: payload.campaign.name,
-        objective: mapObjectiveToMetaObjective(payload.campaign.objective),
-        status: 'PAUSED',
-        special_ad_categories: JSON.stringify(['NONE']),
-      },
+      normalizedAdAccountId,
+      payload,
     )
+    campaign = campaignResult.campaign
+    campaignDebug = campaignResult.debug
   } catch (error) {
     throw new Error(`Campaign create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
   }
@@ -1467,6 +1519,7 @@ async function executeDirectFacebookPublish(
       {
         ok: true,
         mode: 'graph_api',
+        campaignRequest: safeJsonParse(campaignDebug) ?? campaignDebug,
         campaignId: campaign.id,
         adSetId: adSet.id,
         creativeId: creative.id,
