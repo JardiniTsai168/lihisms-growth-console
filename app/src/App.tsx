@@ -1518,6 +1518,17 @@ function buildArgsFromSchema(
     }
   }
 
+  // Meta Ads MCP schemas have been incomplete in practice; keep known extra
+  // fields when we have a concrete value so required runtime parameters are not
+  // silently dropped before the tool call.
+  for (const [propertyName, propertyValue] of Object.entries(candidates)) {
+    if (args[propertyName] !== undefined || propertyValue === undefined) {
+      continue
+    }
+
+    args[propertyName] = propertyValue
+  }
+
   if (missing.length > 0) {
     throw new Error(
       `${tool.name} 缺少必要欄位：${missing.join(', ')}。Schema keys: ${Object.keys(
