@@ -1257,6 +1257,12 @@ type McpJsonRpcResponse<T> = {
   error?: McpJsonRpcError
 }
 
+type MetaErrorPayload = {
+  title?: string
+  detail?: string
+  status?: number
+}
+
 type ServerSentEventBlock = {
   event?: string
   data: string[]
@@ -1294,6 +1300,10 @@ function buildAdsMcpHeaders(
   }
 }
 
+function hasGrantedScope(grantedScopes: string[], scope: string) {
+  return grantedScopes.some((item) => item.trim() === scope)
+}
+
 async function postAdsMcpRpc<T>(
   gateway: AdsMcpGatewayConfig,
   body: Record<string, unknown>,
@@ -1314,9 +1324,21 @@ async function postAdsMcpRpc<T>(
   }
   const text = await httpResponse.text()
   const parsed = parseMcpJsonRpcResponse<T>(text)
+  const metaError = safeJsonParse<MetaErrorPayload>(text)
 
   if (!httpResponse.ok) {
-    throw new Error(text || `Ads MCP request failed with ${httpResponse.status}`)
+    if (
+      httpResponse.status === 403 &&
+      (metaError?.title === 'Unauthorized Access' || metaError?.detail === 'Unauthorized Access')
+    ) {
+      throw new Error(
+        'Meta Ads MCP 拒絕授權。這通常代表目前 access token 沒有真的取得 `ads_mcp_management`，或這個 Meta app / 使用者尚未被允許使用 Ads MCP。',
+      )
+    }
+
+    throw new Error(
+      metaError?.detail || metaError?.title || text || `Ads MCP request failed with ${httpResponse.status}`,
+    )
   }
 
   if (!parsed) {
@@ -2964,6 +2986,18 @@ function App() {
 
     if (state.adsMcpGateway.connectionStatus !== 'connected') {
       setPublishStatusMessage('請先完成 Facebook 連線，再送出 publish。')
+      return
+    }
+
+    if (
+      state.adsMcpGateway.mode === 'remote' &&
+      !hasGrantedScope(state.adsMcpGateway.grantedScopes, 'ads_mcp_management')
+    ) {
+      setPublishStatusMessage(
+        `目前 token 沒有拿到 ads_mcp_management。請先 Reconnect Facebook，並確認授權 scopes 真的包含 ads_mcp_management。現在拿到的是：${
+          state.adsMcpGateway.grantedScopes.join(', ') || 'none'
+        }`,
+      )
       return
     }
 
