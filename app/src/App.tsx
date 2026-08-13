@@ -422,12 +422,13 @@ function buildSubmissionRecord(): PublishBundle['submission'] {
 }
 
 function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
-  const endpointUrl = import.meta.env.VITE_ADS_MCP_GATEWAY_URL ?? ''
+  const configuredEndpointUrl = import.meta.env.VITE_ADS_MCP_GATEWAY_URL ?? ''
+  const endpointUrl = configuredEndpointUrl.trim() || META_ADS_MCP_SERVER
   const appId = import.meta.env.VITE_FACEBOOK_APP_ID ?? ''
   const graphVersion = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION ?? 'v26.0'
 
   return {
-    mode: endpointUrl.trim() ? 'remote' : 'graph_api',
+    mode: endpointUrl.trim() ? 'remote' : 'demo',
     endpointUrl,
     appId,
     graphVersion,
@@ -795,7 +796,7 @@ async function fetchFacebookAccountStructure(
 function buildAdsMcpGatewayRequest(payload: AdsMcpPayloadPreview): AdsMcpGatewayRequest {
   return {
     server: META_ADS_MCP_SERVER,
-    operation: payload.operation,
+    operation: 'ads_mcp_tool_sequence_preview',
     payload,
   }
 }
@@ -825,7 +826,7 @@ function buildAdsMcpPayloadPreview(bundle: {
   return {
     server: 'meta_ads_mcp',
     version: 'draft_v1',
-    operation: 'upsert_campaign_bundle',
+    operation: 'ads_mcp_tool_sequence_preview',
     connection: {
       endpoint: bundle.gateway.endpointUrl.trim() || META_ADS_MCP_SERVER,
       mode: bundle.gateway.mode,
@@ -1012,9 +1013,13 @@ function migrateAppState(state: AppState) {
     appId,
     graphVersion,
     mode:
-      storedGateway?.mode === 'demo' && !storedGateway?.endpointUrl?.trim()
-        ? 'graph_api'
+      storedGateway?.mode === 'graph_api'
+        ? 'remote'
+        : storedGateway?.mode === 'demo' && !storedGateway?.endpointUrl?.trim()
+          ? defaultGateway.mode
         : (storedGateway?.mode ?? defaultGateway.mode),
+    endpointUrl:
+      storedGateway?.endpointUrl?.trim() || defaultGateway.endpointUrl,
     accessToken: storedGateway?.accessToken ?? null,
     tokenExpiresAt: storedGateway?.tokenExpiresAt ?? null,
     grantedScopes: storedGateway?.grantedScopes ?? [],
@@ -1221,35 +1226,6 @@ function migrateAppState(state: AppState) {
   }
 }
 
-function getFacebookCampaignObjectiveCandidates(objective: CampaignObjective) {
-  return objective === 'leads' ? ['OUTCOME_LEADS'] : ['OUTCOME_SALES']
-}
-
-function mapOptimizationGoalToMetaOptimizationGoal(goal: OptimizationGoal) {
-  switch (goal) {
-    case 'leads':
-      return 'LEAD_GENERATION'
-    case 'conversions':
-      return 'OFFSITE_CONVERSIONS'
-    default:
-      return 'LANDING_PAGE_VIEWS'
-  }
-}
-
-function mapOptimizationGoalToMetaBillingEvent(goal: OptimizationGoal) {
-  switch (goal) {
-    case 'leads':
-    case 'conversions':
-      return 'IMPRESSIONS'
-    default:
-      return 'IMPRESSIONS'
-  }
-}
-
-function mapObjectiveToCustomEventType(objective: CampaignObjective) {
-  return objective === 'leads' ? 'LEAD' : 'COMPLETE_REGISTRATION'
-}
-
 function parseAgeRange(ageRange: string) {
   const [min, max] = ageRange.split('-').map((part) => Number.parseInt(part.trim(), 10))
   return {
@@ -1260,6 +1236,284 @@ function parseAgeRange(ageRange: string) {
 
 function getCountryCode(geo: string) {
   return resolveFacebookCountryCode(geo)
+}
+
+type McpJsonRpcError = {
+  code: number
+  message: string
+  data?: unknown
+}
+
+type McpJsonRpcResponse<T> = {
+  id?: string | number | null
+  jsonrpc?: string
+  result?: T
+  error?: McpJsonRpcError
+}
+
+type McpToolDefinition = {
+  name: string
+  description?: string
+  inputSchema?: {
+    type?: string
+    required?: string[]
+    properties?: Record<string, unknown>
+  }
+}
+
+type McpToolCallResult = {
+  content?: Array<{ type?: string; text?: string }>
+  structuredContent?: Record<string, unknown>
+  isError?: boolean
+}
+
+function getAdsMcpEndpoint(gateway: AdsMcpGatewayConfig) {
+  return gateway.endpointUrl.trim() || META_ADS_MCP_SERVER
+}
+
+function buildAdsMcpHeaders(
+  gateway: AdsMcpGatewayConfig,
+  sessionId?: string | null,
+) {
+  return {
+    Accept: 'application/json, text/event-stream',
+    'Content-Type': 'application/json',
+    ...(gateway.accessToken ? { Authorization: `Bearer ${gateway.accessToken}` } : {}),
+    ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
+  }
+}
+
+async function postAdsMcpRpc<T>(
+  gateway: AdsMcpGatewayConfig,
+  body: Record<string, unknown>,
+  sessionId?: string | null,
+): Promise<{ response: McpJsonRpcResponse<T>; sessionId: string | null }> {
+  const httpResponse = await fetch(getAdsMcpEndpoint(gateway), {
+    method: 'POST',
+    headers: buildAdsMcpHeaders(gateway, sessionId),
+    body: JSON.stringify(body),
+  })
+  const text = await httpResponse.text()
+  const parsed = safeJsonParse<McpJsonRpcResponse<T>>(text)
+
+  if (!httpResponse.ok) {
+    throw new Error(text || `Ads MCP request failed with ${httpResponse.status}`)
+  }
+
+  if (!parsed) {
+    throw new Error('Ads MCP returned a non-JSON response.')
+  }
+
+  if (parsed.error) {
+    throw new Error(parsed.error.message || 'Ads MCP returned an error.')
+  }
+
+  return {
+    response: parsed,
+    sessionId: httpResponse.headers.get('mcp-session-id'),
+  }
+}
+
+async function initializeAdsMcpSession(gateway: AdsMcpGatewayConfig) {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const initialize = await postAdsMcpRpc<{ protocolVersion?: string }>(gateway, {
+    jsonrpc: '2.0',
+    id: 'initialize',
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-11-25',
+      capabilities: {},
+      clientInfo: {
+        name: 'lihisms-growth-console',
+        version: '1.0.0',
+      },
+    },
+  })
+
+  await postAdsMcpRpc(
+    gateway,
+    {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+      params: {},
+    },
+    initialize.sessionId,
+  )
+
+  const toolsList = await postAdsMcpRpc<{ tools?: McpToolDefinition[] }>(
+    gateway,
+    {
+      jsonrpc: '2.0',
+      id: 'tools-list',
+      method: 'tools/list',
+      params: {},
+    },
+    initialize.sessionId,
+  )
+
+  return {
+    sessionId: toolsList.sessionId ?? initialize.sessionId,
+    tools: toolsList.response.result?.tools ?? [],
+  }
+}
+
+async function callAdsMcpTool(
+  gateway: AdsMcpGatewayConfig,
+  sessionId: string | null,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const result = await postAdsMcpRpc<McpToolCallResult>(
+    gateway,
+    {
+      jsonrpc: '2.0',
+      id: `tool-${name}`,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: args,
+      },
+    },
+    sessionId,
+  )
+
+  return result.response.result ?? {}
+}
+
+function mapObjectiveToAdsMcpObjective(objective: CampaignObjective) {
+  return objective === 'leads' ? 'OUTCOME_LEADS' : 'OUTCOME_SALES'
+}
+
+function mapOptimizationGoalToAdsMcpOptimizationGoal(goal: OptimizationGoal) {
+  switch (goal) {
+    case 'leads':
+      return 'LEAD_GENERATION'
+    case 'conversions':
+      return 'OFFSITE_CONVERSIONS'
+    default:
+      return 'LANDING_PAGE_VIEWS'
+  }
+}
+
+function shapeValueForSchema(value: unknown, schema: unknown): unknown {
+  if (!schema || value === undefined) {
+    return value
+  }
+
+  const typedSchema = schema as {
+    type?: string
+    properties?: Record<string, unknown>
+    items?: unknown
+  }
+
+  if (typedSchema.type === 'object' && typedSchema.properties && value && typeof value === 'object') {
+    const shaped: Record<string, unknown> = {}
+    for (const [key, propertySchema] of Object.entries(typedSchema.properties)) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        const nextValue = shapeValueForSchema(
+          (value as Record<string, unknown>)[key],
+          propertySchema,
+        )
+        if (nextValue !== undefined) {
+          shaped[key] = nextValue
+        }
+      }
+    }
+    return shaped
+  }
+
+  if (typedSchema.type === 'array' && Array.isArray(value)) {
+    return value.map((item) => shapeValueForSchema(item, typedSchema.items))
+  }
+
+  return value
+}
+
+function buildArgsFromSchema(
+  tool: McpToolDefinition | undefined,
+  candidates: Record<string, unknown>,
+) {
+  if (!tool?.inputSchema?.properties) {
+    return candidates
+  }
+
+  const args: Record<string, unknown> = {}
+  const missing: string[] = []
+
+  for (const [propertyName, propertySchema] of Object.entries(tool.inputSchema.properties)) {
+    if (Object.prototype.hasOwnProperty.call(candidates, propertyName)) {
+      const nextValue = shapeValueForSchema(candidates[propertyName], propertySchema)
+      if (nextValue !== undefined) {
+        args[propertyName] = nextValue
+      }
+    }
+  }
+
+  for (const requiredName of tool.inputSchema.required ?? []) {
+    if (args[requiredName] === undefined) {
+      missing.push(requiredName)
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `${tool.name} 缺少必要欄位：${missing.join(', ')}。Schema keys: ${Object.keys(
+        tool.inputSchema.properties,
+      ).join(', ')}`,
+    )
+  }
+
+  return args
+}
+
+function buildAdsMcpPlacements(placementStrategy: PlacementStrategy) {
+  if (placementStrategy === 'stories_and_reels') {
+    return {
+      publisher_platforms: ['facebook', 'instagram'],
+      facebook_positions: ['story', 'facebook_reels'],
+      instagram_positions: ['story', 'reels'],
+    }
+  }
+
+  return {
+    publisher_platforms: ['facebook', 'instagram'],
+    facebook_positions: ['feed'],
+    instagram_positions: ['stream'],
+  }
+}
+
+function extractMcpStructuredData(result: McpToolCallResult) {
+  if (result.structuredContent && typeof result.structuredContent === 'object') {
+    return result.structuredContent
+  }
+
+  const textBlock = result.content?.find((item) => item.text?.trim())
+  if (!textBlock?.text) {
+    return null
+  }
+
+  return safeJsonParse<Record<string, unknown>>(textBlock.text) ?? { text: textBlock.text }
+}
+
+function extractEntityId(
+  data: Record<string, unknown> | null,
+  keys: string[],
+) {
+  if (!data) {
+    return null
+  }
+
+  for (const key of keys) {
+    const value = data[key]
+    if (typeof value === 'string' && value.trim()) {
+      return value
+    }
+  }
+
+  return null
 }
 
 function buildFacebookTargeting(bundle: PublishBundle) {
@@ -1279,255 +1533,6 @@ function buildFacebookTargeting(bundle: PublishBundle) {
   }
 
   return targeting
-}
-
-async function postFacebookGraph<T>(
-  gateway: AdsMcpGatewayConfig,
-  path: string,
-  fields: Record<string, unknown>,
-): Promise<T> {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const response = await fetch(`https://graph.facebook.com/${gateway.graphVersion}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      ...fields,
-      access_token: gateway.accessToken,
-    }),
-  })
-
-  const text = await response.text()
-  const payload = safeJsonParse<{ error?: { message?: string } } & T>(text)
-
-  if (!response.ok || payload?.error) {
-    throw new Error(payload?.error?.message ?? text ?? `Facebook publish failed (${response.status})`)
-  }
-
-  if (!payload) {
-    throw new Error('Facebook publish returned an empty response.')
-  }
-
-  return payload
-}
-
-async function createFacebookCampaignWithFallbacks(
-  gateway: AdsMcpGatewayConfig,
-  adAccountId: string,
-  payload: AdsMcpPayloadPreview,
-): Promise<{ campaign: { id: string }; debug: string }> {
-  const attempts: Array<{ label: string; fields: Record<string, unknown> }> = []
-
-  for (const objective of getFacebookCampaignObjectiveCandidates(payload.campaign.objective)) {
-    attempts.push({
-      label: `${objective} + special_ad_category=NONE`,
-      fields: {
-        name: payload.campaign.name,
-        objective,
-        special_ad_category: 'NONE',
-      },
-    })
-    attempts.push({
-      label: `${objective} + paused + special_ad_category=NONE`,
-      fields: {
-        name: payload.campaign.name,
-        objective,
-        status: 'PAUSED',
-        special_ad_category: 'NONE',
-      },
-    })
-  }
-
-  const errors: string[] = []
-
-  for (const attempt of attempts) {
-    try {
-      const campaign = await postFacebookGraph<{ id: string }>(
-        gateway,
-        `/${adAccountId}/campaigns`,
-        attempt.fields,
-      )
-
-      return {
-        campaign,
-        debug: JSON.stringify({ attempt: attempt.label, fields: attempt.fields }, null, 2),
-      }
-    } catch (error) {
-      errors.push(
-        `${attempt.label}: ${error instanceof Error ? error.message : 'unknown error'}`,
-      )
-    }
-  }
-
-  throw new Error(errors.join(' | '))
-}
-
-async function executeDirectFacebookPublish(
-  gateway: AdsMcpGatewayConfig,
-  payload: AdsMcpPayloadPreview,
-): Promise<AdsMcpPublishResult> {
-  if (!gateway.pageId.trim()) {
-    throw new Error('請先選擇 Facebook Page，再送出 publish。')
-  }
-
-  const normalizedAdAccountId = normalizeFacebookAdAccountId(gateway.adAccountId)
-  const selectedImageUrl = payload.creative.assetUrls[0]
-
-  if (!selectedImageUrl) {
-    throw new Error('這份 draft 還沒有可投放的 Meta 素材 URL。')
-  }
-
-  let campaign: { id: string }
-  let campaignDebug = ''
-  try {
-    const campaignResult = await createFacebookCampaignWithFallbacks(
-      gateway,
-      normalizedAdAccountId,
-      payload,
-    )
-    campaign = campaignResult.campaign
-    campaignDebug = campaignResult.debug
-  } catch (error) {
-    throw new Error(`Campaign create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
-  }
-
-  let adSet: { id: string }
-  try {
-    adSet = await postFacebookGraph<{ id: string }>(
-      gateway,
-      `/${normalizedAdAccountId}/adsets`,
-      {
-        name: payload.adSet.name,
-        campaign_id: campaign.id,
-        status: 'PAUSED',
-        daily_budget: DEFAULT_DAILY_BUDGET_MINOR,
-        billing_event: mapOptimizationGoalToMetaBillingEvent(payload.adSet.optimizationGoal),
-        optimization_goal: mapOptimizationGoalToMetaOptimizationGoal(payload.adSet.optimizationGoal),
-        promoted_object: {
-          pixel_id: payload.connection.pixelId,
-          custom_event_type: mapObjectiveToCustomEventType(payload.campaign.objective),
-        },
-        targeting:
-          buildFacebookTargeting({
-            campaignPayload: {
-              name: payload.campaign.name,
-              objective: payload.campaign.objective,
-              funnelStage: 'prospecting',
-              market: payload.adSet.audience.geo,
-              buyingType: 'auction',
-            },
-            adSetPayload: {
-              name: payload.adSet.name,
-              audienceType: payload.adSet.audience.type,
-              audienceWindowDays: payload.adSet.audience.windowDays,
-              budgetStrategy: payload.adSet.budgetStrategy,
-              optimizationGoal: payload.adSet.optimizationGoal,
-              placementStrategy: payload.adSet.placementStrategy,
-              geo: payload.adSet.audience.geo,
-              ageRange: payload.adSet.audience.ageRange,
-            },
-            adPayload: {
-              name: payload.ad.name,
-              angleFamily: 'benefit',
-              angleLabel: payload.ad.name,
-              copyMode: '品牌',
-              selectedPlatforms: payload.creative.selectedPlatforms,
-            },
-            copyPayload: {
-              primaryText: payload.creative.primaryText,
-              headline: payload.creative.headline,
-              description: payload.creative.description,
-              destinationUrl: payload.creative.destinationUrl,
-            },
-            assetSelections: [],
-            adsMcpPayload: payload,
-            submission: buildSubmissionRecord(),
-            checklist: {
-              hasCopy: true,
-              hasDestinationUrl: true,
-              hasSelectedAssets: true,
-              hasMetaAsset: true,
-            },
-            lastError: null,
-            preparedAt: null,
-          }),
-      },
-    )
-  } catch (error) {
-    throw new Error(`Ad set create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
-  }
-
-  let creative: { id: string }
-  try {
-    creative = await postFacebookGraph<{ id: string }>(
-      gateway,
-      `/${normalizedAdAccountId}/adcreatives`,
-      {
-        name: payload.creative.name,
-        object_story_spec: {
-          page_id: gateway.pageId,
-          link_data: {
-            message: payload.creative.primaryText,
-            name: payload.creative.headline,
-            description: payload.creative.description,
-            link: payload.creative.destinationUrl,
-            image_url: selectedImageUrl,
-            call_to_action: {
-              type: 'LEARN_MORE',
-              value: {
-                link: payload.creative.destinationUrl,
-              },
-            },
-          },
-        },
-      },
-    )
-  } catch (error) {
-    throw new Error(`Ad creative create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
-  }
-
-  let ad: { id: string }
-  try {
-    ad = await postFacebookGraph<{ id: string }>(
-      gateway,
-      `/${normalizedAdAccountId}/ads`,
-      {
-        name: payload.ad.name,
-        adset_id: adSet.id,
-        creative: {
-          creative_id: creative.id,
-        },
-        status: 'PAUSED',
-      },
-    )
-  } catch (error) {
-    throw new Error(`Ad create 失敗: ${error instanceof Error ? error.message : 'unknown error'}`)
-  }
-
-  return {
-    requestId: `graph_${Math.random().toString(36).slice(2, 10)}`,
-    responseCode: 200,
-    responseBody: JSON.stringify(
-      {
-        ok: true,
-        mode: 'graph_api',
-        campaignRequest: safeJsonParse(campaignDebug) ?? campaignDebug,
-        campaignId: campaign.id,
-        adSetId: adSet.id,
-        creativeId: creative.id,
-        adId: ad.id,
-      },
-      null,
-      2,
-    ),
-    externalCampaignId: campaign.id,
-    externalAdSetId: adSet.id,
-    externalAdId: ad.id,
-  }
 }
 
 async function executeAdsMcpPublish(
@@ -1565,33 +1570,195 @@ async function executeAdsMcpPublish(
     }
   }
 
-  if (gateway.mode === 'graph_api' || !gateway.endpointUrl.trim()) {
-    return executeDirectFacebookPublish(gateway, payload)
+  const { sessionId, tools } = await initializeAdsMcpSession(gateway)
+  const campaignTool = tools.find((tool) => tool.name === 'ads_create_campaign')
+  const adSetTool = tools.find((tool) => tool.name === 'ads_create_ad_set')
+  const adTool = tools.find((tool) => tool.name === 'ads_create_ad')
+
+  if (!campaignTool || !adSetTool || !adTool) {
+    throw new Error(
+      `Ads MCP 缺少必要工具。找到: ${tools.map((tool) => tool.name).join(', ') || 'none'}`,
+    )
   }
 
-  const response = await fetch(gateway.endpointUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(gateway.accessToken ? { Authorization: `Bearer ${gateway.accessToken}` } : {}),
-    },
-    body: JSON.stringify(buildAdsMcpGatewayRequest(payload)),
+  const selectedImageUrl = payload.creative.assetUrls[0]
+
+  if (!selectedImageUrl) {
+    throw new Error('這份 draft 還沒有可投放的 Meta 素材 URL。')
+  }
+
+  const campaignArgs = buildArgsFromSchema(campaignTool, {
+    ad_account_id: gateway.adAccountId,
+    account_id: gateway.adAccountId,
+    name: payload.campaign.name,
+    objective: mapObjectiveToAdsMcpObjective(payload.campaign.objective),
+    special_ad_category: 'NONE',
+    special_ad_categories: ['NONE'],
+    status: 'PAUSED',
+    buying_type: 'AUCTION',
   })
-  const responseBody = await response.text()
+  const campaignResult = await callAdsMcpTool(
+    gateway,
+    sessionId,
+    campaignTool.name,
+    campaignArgs,
+  )
+  const campaignData = extractMcpStructuredData(campaignResult)
+  const campaignId =
+    extractEntityId(campaignData, ['campaign_id', 'id', 'entity_id']) ?? externalCampaignId
 
-  if (!response.ok) {
-    throw new Error(responseBody || `Ads MCP publish failed with ${response.status}`)
-  }
+  const adSetArgs = buildArgsFromSchema(adSetTool, {
+    ad_account_id: gateway.adAccountId,
+    account_id: gateway.adAccountId,
+    campaign_id: campaignId,
+    name: payload.adSet.name,
+    status: 'PAUSED',
+    daily_budget: DEFAULT_DAILY_BUDGET_MINOR,
+    billing_event: 'IMPRESSIONS',
+    optimization_goal: mapOptimizationGoalToAdsMcpOptimizationGoal(payload.adSet.optimizationGoal),
+    destination_type: 'WEBSITE',
+    page_id: gateway.pageId,
+    pixel_id: gateway.pixelId,
+    promoted_object: {
+      pixel_id: gateway.pixelId,
+      custom_event_type:
+        payload.campaign.objective === 'leads' ? 'LEAD' : 'COMPLETE_REGISTRATION',
+    },
+    targeting: {
+      ...buildFacebookTargeting({
+        campaignPayload: {
+          name: payload.campaign.name,
+          objective: payload.campaign.objective,
+          funnelStage: 'prospecting',
+          market: payload.adSet.audience.geo,
+          buyingType: 'auction',
+        },
+        adSetPayload: {
+          name: payload.adSet.name,
+          audienceType: payload.adSet.audience.type,
+          audienceWindowDays: payload.adSet.audience.windowDays,
+          budgetStrategy: payload.adSet.budgetStrategy,
+          optimizationGoal: payload.adSet.optimizationGoal,
+          placementStrategy: payload.adSet.placementStrategy,
+          geo: payload.adSet.audience.geo,
+          ageRange: payload.adSet.audience.ageRange,
+        },
+        adPayload: {
+          name: payload.ad.name,
+          angleFamily: 'benefit',
+          angleLabel: payload.ad.name,
+          copyMode: '品牌',
+          selectedPlatforms: payload.creative.selectedPlatforms,
+        },
+        copyPayload: {
+          primaryText: payload.creative.primaryText,
+          headline: payload.creative.headline,
+          description: payload.creative.description,
+          destinationUrl: payload.creative.destinationUrl,
+        },
+        assetSelections: [],
+        adsMcpPayload: payload,
+        submission: buildSubmissionRecord(),
+        checklist: {
+          hasCopy: true,
+          hasDestinationUrl: true,
+          hasSelectedAssets: true,
+          hasMetaAsset: true,
+        },
+        lastError: null,
+        preparedAt: null,
+      }),
+      ...buildAdsMcpPlacements(payload.adSet.placementStrategy),
+    },
+    selected_platforms: payload.creative.selectedPlatforms,
+    destination_url: payload.creative.destinationUrl,
+  })
+  const adSetResult = await callAdsMcpTool(gateway, sessionId, adSetTool.name, adSetArgs)
+  const adSetData = extractMcpStructuredData(adSetResult)
+  const createdAdSetId =
+    extractEntityId(adSetData, ['ad_set_id', 'adset_id', 'id', 'entity_id']) ??
+    externalAdSetId
 
-  const parsed = safeJsonParse<AdsMcpGatewayResponse>(responseBody)
+  const adArgs = buildArgsFromSchema(adTool, {
+    ad_account_id: gateway.adAccountId,
+    account_id: gateway.adAccountId,
+    ad_set_id: createdAdSetId,
+    adset_id: createdAdSetId,
+    page_id: gateway.pageId,
+    name: payload.ad.name,
+    status: 'PAUSED',
+    destination_url: payload.creative.destinationUrl,
+    image_url: selectedImageUrl,
+    primary_text: payload.creative.primaryText,
+    headline: payload.creative.headline,
+    description: payload.creative.description,
+    creative: {
+      page_id: gateway.pageId,
+      primary_text: payload.creative.primaryText,
+      headline: payload.creative.headline,
+      description: payload.creative.description,
+      destination_url: payload.creative.destinationUrl,
+      link: payload.creative.destinationUrl,
+      image_url: selectedImageUrl,
+      call_to_action: {
+        type: 'LEARN_MORE',
+        value: {
+          link: payload.creative.destinationUrl,
+        },
+      },
+    },
+    object_story_spec: {
+      page_id: gateway.pageId,
+      link_data: {
+        message: payload.creative.primaryText,
+        name: payload.creative.headline,
+        description: payload.creative.description,
+        link: payload.creative.destinationUrl,
+        image_url: selectedImageUrl,
+        call_to_action: {
+          type: 'LEARN_MORE',
+          value: {
+            link: payload.creative.destinationUrl,
+          },
+        },
+      },
+    },
+  })
+  const adResult = await callAdsMcpTool(gateway, sessionId, adTool.name, adArgs)
+  const adData = extractMcpStructuredData(adResult)
+  const createdAdId =
+    extractEntityId(adData, ['ad_id', 'id', 'entity_id']) ?? externalAdId
 
   return {
-    requestId: parsed?.requestId ?? requestId,
-    responseCode: response.status,
-    responseBody,
-    externalCampaignId: parsed?.campaignId ?? externalCampaignId,
-    externalAdSetId: parsed?.adSetId ?? externalAdSetId,
-    externalAdId: parsed?.adId ?? externalAdId,
+    requestId,
+    responseCode: 200,
+    responseBody: JSON.stringify(
+      {
+        ok: true,
+        mode: 'remote',
+        endpoint: getAdsMcpEndpoint(gateway),
+        tools: {
+          campaign: campaignTool.name,
+          adSet: adSetTool.name,
+          ad: adTool.name,
+        },
+        args: {
+          campaign: campaignArgs,
+          adSet: adSetArgs,
+          ad: adArgs,
+        },
+        result: {
+          campaign: campaignData,
+          adSet: adSetData,
+          ad: adData,
+        },
+      },
+      null,
+      2,
+    ),
+    externalCampaignId: campaignId,
+    externalAdSetId: createdAdSetId,
+    externalAdId: createdAdId,
   }
 }
 
@@ -1755,7 +1922,7 @@ function App() {
             ...current.adsMcpGateway,
             connectionStatus: 'connected',
             businessName: 'Facebook Ads OAuth',
-            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
+            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'demo',
             availableAdAccounts,
             availablePixels: current.adsMcpGateway.availablePixels,
             availablePages,
@@ -1788,7 +1955,7 @@ function App() {
             ...current.adsMcpGateway,
             connectionStatus: 'connected',
             businessName: 'Facebook Ads OAuth',
-            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
+            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'demo',
             availableAdAccounts,
             availablePixels:
               availablePixels.length > 0 ? availablePixels : current.adsMcpGateway.availablePixels,
@@ -2648,7 +2815,7 @@ function App() {
       ...current,
       adsMcpGateway: {
         ...current.adsMcpGateway,
-        mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
+        mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'demo',
         connectionStatus: 'disconnected',
         businessName: null,
         availableAdAccounts: [],
@@ -2807,9 +2974,7 @@ function App() {
       `正在送出 ${draft.publishBundle.adPayload.name} 到 ${
         state.adsMcpGateway.mode === 'demo'
           ? 'demo gateway'
-          : state.adsMcpGateway.mode === 'graph_api'
-            ? 'Facebook Graph API'
-            : 'remote gateway'
+          : 'Meta Ads MCP'
       }...`,
     )
 
@@ -4049,7 +4214,7 @@ function App() {
           ) : null}
 
           <details className="advanced-panel">
-            <summary>進階連線與 gateway 資訊</summary>
+            <summary>進階連線與 Ads MCP 資訊</summary>
             <div className="builder-flow">
               <span>Connection mode: {state.adsMcpGateway.mode}</span>
               <span>Graph API: {state.adsMcpGateway.graphVersion}</span>
@@ -4076,29 +4241,29 @@ function App() {
 
             <div className="api-spec-grid">
               <article className="api-spec-card">
-                <h3>Remote gateway contract</h3>
-                <p>POST 你的 gateway endpoint，body 必須吃 `server + operation + payload`。</p>
+                <h3>Official MCP flow</h3>
+                <p>publish 時會先 `initialize`，再 `tools/list`，最後依序呼叫 `ads_create_campaign / ad_set / ad`。</p>
               </article>
               <article className="api-spec-card">
-                <h3>Required response</h3>
-                <p>回 `requestId`、`campaignId`、`adSetId`、`adId`，前端才會回寫 published。</p>
+                <h3>Write path</h3>
+                <p>正式寫入已不再走前端手拼 Graph API，而是直接走 Meta Ads MCP tools。</p>
               </article>
               <article className="api-spec-card">
                 <h3>Failure behavior</h3>
-                <p>非 2xx 或 JSON 不完整時，draft 會進 `failed`，並保留錯誤訊息。</p>
+                <p>MCP tool call 失敗時，draft 會進 `failed`，並保留 server 回傳的錯誤訊息。</p>
               </article>
             </div>
 
             {gatewayContractPreview ? (
               <div className="gateway-contract-grid">
                 <article>
-                  <p className="eyebrow">request</p>
+                  <p className="eyebrow">prepared payload</p>
                   <pre className="payload-preview">
                     {JSON.stringify(gatewayContractPreview.request, null, 2)}
                   </pre>
                 </article>
                 <article>
-                  <p className="eyebrow">expected response</p>
+                  <p className="eyebrow">publish result shape</p>
                   <pre className="payload-preview">
                     {JSON.stringify(gatewayContractPreview.response, null, 2)}
                   </pre>
@@ -4106,8 +4271,8 @@ function App() {
               </div>
             ) : (
               <article className="creative-empty-state compact">
-                <h3>還沒有 contract sample</h3>
-                <p>先把 draft prepare 成 ready_to_publish，這裡就會自動帶出 gateway request sample。</p>
+                <h3>還沒有 payload sample</h3>
+                <p>先把 draft prepare 成 ready_to_publish，這裡就會帶出目前準備送進 Ads MCP 的 payload。</p>
               </article>
             )}
           </details>
@@ -4162,7 +4327,7 @@ function App() {
                         onClick={() => publishDraftToAdsMcp(draft.id)}
                         disabled={publishingDraftId === draft.id}
                       >
-                        {publishingDraftId === draft.id ? 'Publishing…' : 'Publish now'}
+                        {publishingDraftId === draft.id ? 'Publishing…' : 'Publish via Ads MCP'}
                       </button>
                     ) : null}
                     {draft.publishBundle.submission.externalAdId ? (

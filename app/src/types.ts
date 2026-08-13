@@ -89,7 +89,7 @@ export type AdsMcpSubmission = {
 
 export type AdsMcpGatewayRequest = {
   server: 'https://mcp.facebook.com/ads'
-  operation: 'upsert_campaign_bundle'
+  operation: 'ads_mcp_tool_sequence_preview'
   payload: AdsMcpPayloadPreview
 }
 
@@ -124,7 +124,7 @@ export type PublishChecklist = {
 export type AdsMcpPayloadPreview = {
   server: 'meta_ads_mcp'
   version: 'draft_v1'
-  operation: 'upsert_campaign_bundle'
+  operation: 'ads_mcp_tool_sequence_preview'
   connection: {
     endpoint: string
     mode: AdsMcpGatewayMode
