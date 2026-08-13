@@ -9,6 +9,7 @@ import type {
   AdsMcpGatewayRequest,
   AdsMcpGatewayResponse,
   AppState,
+  AdsPageOption,
   AudienceType,
   BudgetStrategy,
   CampaignObjective,
@@ -33,6 +34,7 @@ const STORAGE_KEY = 'lihisms-growth-console-v7'
 const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
 const META_ADS_MCP_SERVER = 'https://mcp.facebook.com/ads'
 const DEMO_PUBLISH_LATENCY_MS = 900
+const DEFAULT_DAILY_BUDGET_MINOR = 10000
 
 type ReviewResponse = {
   batchId: string
@@ -420,12 +422,13 @@ function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
   const graphVersion = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION ?? 'v26.0'
 
   return {
-    mode: endpointUrl.trim() ? 'remote' : 'demo',
+    mode: endpointUrl.trim() ? 'remote' : 'graph_api',
     endpointUrl,
     appId,
     graphVersion,
     adAccountId: '',
     pixelId: '',
+    pageId: '',
     authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
     accessToken: null,
     tokenExpiresAt: null,
@@ -435,6 +438,7 @@ function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
     businessName: null,
     availableAdAccounts: [],
     availablePixels: [],
+    availablePages: [],
     lastError: null,
     lastValidatedAt: null,
   }
@@ -449,7 +453,7 @@ function buildFacebookOauthUrl(gateway: AdsMcpGatewayConfig, oauthState: string)
     client_id: gateway.appId,
     redirect_uri: buildFacebookRedirectUri(),
     response_type: 'token',
-    scope: 'ads_management,ads_read,business_management,ads_mcp_management',
+    scope: 'ads_management,ads_read,business_management,ads_mcp_management,pages_show_list',
     state: oauthState,
   })
 
@@ -660,6 +664,30 @@ async function fetchFacebookPixels(gateway: AdsMcpGatewayConfig, adAccountId: st
     id: pixel.id,
     name: pixel.name ?? pixel.id,
   }))
+}
+
+async function fetchFacebookPages(gateway: AdsMcpGatewayConfig): Promise<AdsPageOption[]> {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const params = new URLSearchParams({
+    fields: 'id,name',
+    limit: '100',
+    access_token: gateway.accessToken,
+  })
+
+  const pages = await fetchFacebookGraphCollection<{ id: string; name?: string }>(
+    gateway,
+    `/me/accounts?${params.toString()}`,
+  )
+
+  return pages
+    .map((page) => ({
+      id: page.id,
+      name: page.name?.trim() || page.id,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant'))
 }
 
 async function fetchFacebookAccountStructure(
@@ -978,6 +1006,10 @@ function migrateAppState(state: AppState) {
     ...storedGateway,
     appId,
     graphVersion,
+    mode:
+      storedGateway?.mode === 'demo' && !storedGateway?.endpointUrl?.trim()
+        ? 'graph_api'
+        : (storedGateway?.mode ?? defaultGateway.mode),
     accessToken: storedGateway?.accessToken ?? null,
     tokenExpiresAt: storedGateway?.tokenExpiresAt ?? null,
     grantedScopes: storedGateway?.grantedScopes ?? [],
@@ -986,6 +1018,8 @@ function migrateAppState(state: AppState) {
     businessName: storedGateway?.businessName ?? null,
     availableAdAccounts: storedGateway?.availableAdAccounts ?? [],
     availablePixels: storedGateway?.availablePixels ?? [],
+    pageId: storedGateway?.pageId ?? '',
+    availablePages: storedGateway?.availablePages ?? [],
     lastError: storedGateway?.lastError ?? null,
   }
 
@@ -998,9 +1032,12 @@ function migrateAppState(state: AppState) {
     storedGateway?.accessToken === undefined ||
     !storedGateway?.availableAdAccounts ||
     !storedGateway?.availablePixels ||
+    storedGateway?.pageId === undefined ||
+    !storedGateway?.availablePages ||
     storedGateway?.lastError === undefined ||
     storedGateway?.appId !== appId ||
-    storedGateway?.graphVersion !== graphVersion
+    storedGateway?.graphVersion !== graphVersion ||
+    adsMcpGateway.mode !== storedGateway?.mode
   ) {
     changed = true
   }
@@ -1154,6 +1191,248 @@ function migrateAppState(state: AppState) {
   }
 }
 
+function mapObjectiveToMetaObjective(objective: CampaignObjective) {
+  return objective === 'leads' ? 'OUTCOME_LEADS' : 'OUTCOME_SALES'
+}
+
+function mapOptimizationGoalToMetaOptimizationGoal(goal: OptimizationGoal) {
+  switch (goal) {
+    case 'leads':
+      return 'LEAD_GENERATION'
+    case 'conversions':
+      return 'OFFSITE_CONVERSIONS'
+    default:
+      return 'LANDING_PAGE_VIEWS'
+  }
+}
+
+function mapOptimizationGoalToMetaBillingEvent(goal: OptimizationGoal) {
+  switch (goal) {
+    case 'leads':
+    case 'conversions':
+      return 'IMPRESSIONS'
+    default:
+      return 'IMPRESSIONS'
+  }
+}
+
+function mapObjectiveToCustomEventType(objective: CampaignObjective) {
+  return objective === 'leads' ? 'LEAD' : 'COMPLETE_REGISTRATION'
+}
+
+function parseAgeRange(ageRange: string) {
+  const [min, max] = ageRange.split('-').map((part) => Number.parseInt(part.trim(), 10))
+  return {
+    ageMin: Number.isFinite(min) ? min : 25,
+    ageMax: Number.isFinite(max) ? max : 45,
+  }
+}
+
+function getCountryCode(geo: string) {
+  const normalized = geo.trim().toUpperCase()
+  return normalized || 'TW'
+}
+
+function buildFacebookTargeting(bundle: PublishBundle) {
+  const { ageMin, ageMax } = parseAgeRange(bundle.adSetPayload.ageRange)
+  const targeting: Record<string, unknown> = {
+    geo_locations: {
+      countries: [getCountryCode(bundle.adSetPayload.geo)],
+    },
+    age_min: ageMin,
+    age_max: ageMax,
+    publisher_platforms: ['facebook'],
+    facebook_positions:
+      bundle.adSetPayload.placementStrategy === 'stories_and_reels'
+        ? ['story', 'facebook_reels']
+        : ['feed'],
+    device_platforms: ['mobile', 'desktop'],
+  }
+
+  return targeting
+}
+
+async function postFacebookGraphForm<T>(
+  gateway: AdsMcpGatewayConfig,
+  path: string,
+  fields: Record<string, string>,
+): Promise<T> {
+  if (!gateway.accessToken) {
+    throw new Error('Missing Facebook access token.')
+  }
+
+  const params = new URLSearchParams(fields)
+  params.set('access_token', gateway.accessToken)
+
+  const response = await fetch(`https://graph.facebook.com/${gateway.graphVersion}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  })
+
+  const text = await response.text()
+  const payload = safeJsonParse<{ error?: { message?: string } } & T>(text)
+
+  if (!response.ok || payload?.error) {
+    throw new Error(payload?.error?.message ?? text ?? `Facebook publish failed (${response.status})`)
+  }
+
+  if (!payload) {
+    throw new Error('Facebook publish returned an empty response.')
+  }
+
+  return payload
+}
+
+async function executeDirectFacebookPublish(
+  gateway: AdsMcpGatewayConfig,
+  payload: AdsMcpPayloadPreview,
+): Promise<AdsMcpPublishResult> {
+  if (!gateway.pageId.trim()) {
+    throw new Error('請先選擇 Facebook Page，再送出 publish。')
+  }
+
+  const normalizedAdAccountId = normalizeFacebookAdAccountId(gateway.adAccountId)
+  const selectedImageUrl = payload.creative.assetUrls[0]
+
+  if (!selectedImageUrl) {
+    throw new Error('這份 draft 還沒有可投放的 Meta 素材 URL。')
+  }
+
+  const campaign = await postFacebookGraphForm<{ id: string }>(
+    gateway,
+    `/${normalizedAdAccountId}/campaigns`,
+    {
+      name: payload.campaign.name,
+      objective: mapObjectiveToMetaObjective(payload.campaign.objective),
+      status: 'PAUSED',
+      special_ad_categories: JSON.stringify([]),
+      buying_type: 'AUCTION',
+    },
+  )
+
+  const adSet = await postFacebookGraphForm<{ id: string }>(
+    gateway,
+    `/${normalizedAdAccountId}/adsets`,
+    {
+      name: payload.adSet.name,
+      campaign_id: campaign.id,
+      status: 'PAUSED',
+      daily_budget: String(DEFAULT_DAILY_BUDGET_MINOR),
+      billing_event: mapOptimizationGoalToMetaBillingEvent(payload.adSet.optimizationGoal),
+      optimization_goal: mapOptimizationGoalToMetaOptimizationGoal(payload.adSet.optimizationGoal),
+      promoted_object: JSON.stringify({
+        pixel_id: payload.connection.pixelId,
+        custom_event_type: mapObjectiveToCustomEventType(payload.campaign.objective),
+      }),
+      targeting: JSON.stringify(
+        buildFacebookTargeting({
+          campaignPayload: {
+            name: payload.campaign.name,
+            objective: payload.campaign.objective,
+            funnelStage: 'prospecting',
+            market: payload.adSet.audience.geo,
+            buyingType: 'auction',
+          },
+          adSetPayload: {
+            name: payload.adSet.name,
+            audienceType: payload.adSet.audience.type,
+            audienceWindowDays: payload.adSet.audience.windowDays,
+            budgetStrategy: payload.adSet.budgetStrategy,
+            optimizationGoal: payload.adSet.optimizationGoal,
+            placementStrategy: payload.adSet.placementStrategy,
+            geo: payload.adSet.audience.geo,
+            ageRange: payload.adSet.audience.ageRange,
+          },
+          adPayload: {
+            name: payload.ad.name,
+            angleFamily: 'benefit',
+            angleLabel: payload.ad.name,
+            copyMode: '品牌',
+            selectedPlatforms: payload.creative.selectedPlatforms,
+          },
+          copyPayload: {
+            primaryText: payload.creative.primaryText,
+            headline: payload.creative.headline,
+            description: payload.creative.description,
+            destinationUrl: payload.creative.destinationUrl,
+          },
+          assetSelections: [],
+          adsMcpPayload: payload,
+          submission: buildSubmissionRecord(),
+          checklist: {
+            hasCopy: true,
+            hasDestinationUrl: true,
+            hasSelectedAssets: true,
+            hasMetaAsset: true,
+          },
+          lastError: null,
+          preparedAt: null,
+        }),
+      ),
+    },
+  )
+
+  const creative = await postFacebookGraphForm<{ id: string }>(
+    gateway,
+    `/${normalizedAdAccountId}/adcreatives`,
+    {
+      name: payload.creative.name,
+      object_story_spec: JSON.stringify({
+        page_id: gateway.pageId,
+        link_data: {
+          message: payload.creative.primaryText,
+          name: payload.creative.headline,
+          description: payload.creative.description,
+          link: payload.creative.destinationUrl,
+          image_url: selectedImageUrl,
+          call_to_action: {
+            type: 'LEARN_MORE',
+            value: {
+              link: payload.creative.destinationUrl,
+            },
+          },
+        },
+      }),
+    },
+  )
+
+  const ad = await postFacebookGraphForm<{ id: string }>(
+    gateway,
+    `/${normalizedAdAccountId}/ads`,
+    {
+      name: payload.ad.name,
+      adset_id: adSet.id,
+      creative: JSON.stringify({
+        creative_id: creative.id,
+      }),
+      status: 'PAUSED',
+    },
+  )
+
+  return {
+    requestId: `graph_${Math.random().toString(36).slice(2, 10)}`,
+    responseCode: 200,
+    responseBody: JSON.stringify(
+      {
+        ok: true,
+        mode: 'graph_api',
+        campaignId: campaign.id,
+        adSetId: adSet.id,
+        creativeId: creative.id,
+        adId: ad.id,
+      },
+      null,
+      2,
+    ),
+    externalCampaignId: campaign.id,
+    externalAdSetId: adSet.id,
+    externalAdId: ad.id,
+  }
+}
+
 async function executeAdsMcpPublish(
   gateway: AdsMcpGatewayConfig,
   payload: AdsMcpPayloadPreview,
@@ -1163,7 +1442,7 @@ async function executeAdsMcpPublish(
   const externalAdSetId = `adset_${Math.abs(stringScore(payload.adSet.name)).toString(36)}`
   const externalAdId = `ad_${Math.abs(stringScore(payload.ad.name)).toString(36)}`
 
-  if (gateway.mode === 'demo' || !gateway.endpointUrl.trim()) {
+  if (gateway.mode === 'demo') {
     await waitAtLeast(DEMO_PUBLISH_LATENCY_MS)
 
     return {
@@ -1187,6 +1466,10 @@ async function executeAdsMcpPublish(
       externalAdSetId,
       externalAdId,
     }
+  }
+
+  if (gateway.mode === 'graph_api' || !gateway.endpointUrl.trim()) {
+    return executeDirectFacebookPublish(gateway, payload)
   }
 
   const response = await fetch(gateway.endpointUrl, {
@@ -1337,7 +1620,7 @@ function App() {
         lastError: null,
       },
     }))
-    setPublishStatusMessage('Facebook OAuth 成功，正在抓取 ad accounts...')
+    setPublishStatusMessage('Facebook OAuth 成功，正在抓取 ad accounts / pages...')
   }, [setState, state.adsMcpGateway.oauthState])
 
   useEffect(() => {
@@ -1352,13 +1635,22 @@ function App() {
 
     const run = async () => {
       try {
-        const availableAdAccounts = await fetchFacebookAdAccounts(state.adsMcpGateway)
+        let pageFetchError: string | null = null
+        const [availableAdAccounts, availablePages] = await Promise.all([
+          fetchFacebookAdAccounts(state.adsMcpGateway),
+          fetchFacebookPages(state.adsMcpGateway).catch((error) => {
+            pageFetchError =
+              error instanceof Error ? error.message : 'Failed to fetch Facebook pages.'
+            return []
+          }),
+        ])
         if (cancelled) {
           return
         }
 
         const nextAdAccountId =
           state.adsMcpGateway.adAccountId || availableAdAccounts[0]?.id || ''
+        const nextPageId = state.adsMcpGateway.pageId || availablePages[0]?.id || ''
 
         setState((current) => ({
           ...current,
@@ -1366,11 +1658,14 @@ function App() {
             ...current.adsMcpGateway,
             connectionStatus: 'connected',
             businessName: 'Facebook Ads OAuth',
+            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
             availableAdAccounts,
             availablePixels: [],
+            availablePages,
             adAccountId: nextAdAccountId,
             pixelId: '',
-            lastError: null,
+            pageId: nextPageId,
+            lastError: pageFetchError,
           },
         }))
 
@@ -1396,17 +1691,22 @@ function App() {
             ...current.adsMcpGateway,
             connectionStatus: 'connected',
             businessName: 'Facebook Ads OAuth',
+            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
             availableAdAccounts,
             availablePixels,
+            availablePages,
             adAccountId: nextAdAccountId,
             pixelId: current.adsMcpGateway.pixelId || availablePixels[0]?.id || '',
-            lastError: pixelFetchError,
+            pageId: current.adsMcpGateway.pageId || availablePages[0]?.id || '',
+            lastError: pixelFetchError ?? pageFetchError,
           },
         }))
         setPublishStatusMessage(
-          pixelFetchError
-            ? `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account，但 pixel 抓取失敗：${pixelFetchError}`
-            : `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account / ${availablePixels.length} 個 pixel。`,
+          pixelFetchError || pageFetchError
+            ? `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account / ${availablePixels.length} 個 pixel / ${availablePages.length} 個 pages，但還有錯誤：${
+                pixelFetchError ?? pageFetchError
+              }`
+            : `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account / ${availablePixels.length} 個 pixel / ${availablePages.length} 個 pages。`,
         )
       } catch (error) {
         if (cancelled) {
@@ -1422,8 +1722,10 @@ function App() {
             lastError: message,
             availableAdAccounts: [],
             availablePixels: [],
+            availablePages: [],
             adAccountId: '',
             pixelId: '',
+            pageId: '',
           },
         }))
         setPublishStatusMessage(`Facebook account fetch 失敗：${message}`)
@@ -1627,6 +1929,9 @@ function App() {
   const selectedPixel = useMemo(() => {
     return state.adsMcpGateway.availablePixels.find((pixel) => pixel.id === state.adsMcpGateway.pixelId)
   }, [state.adsMcpGateway.availablePixels, state.adsMcpGateway.pixelId])
+  const selectedPage = useMemo(() => {
+    return state.adsMcpGateway.availablePages.find((page) => page.id === state.adsMcpGateway.pageId)
+  }, [state.adsMcpGateway.availablePages, state.adsMcpGateway.pageId])
   const activeCampaignId = useMemo(() => {
     if (accountStructureSnapshot.campaigns.some((campaign) => campaign.id === selectedCampaignId)) {
       return selectedCampaignId
@@ -2241,12 +2546,15 @@ function App() {
       ...current,
       adsMcpGateway: {
         ...current.adsMcpGateway,
+        mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'graph_api',
         connectionStatus: 'disconnected',
         businessName: null,
         availableAdAccounts: [],
         availablePixels: [],
+        availablePages: [],
         adAccountId: '',
         pixelId: '',
+        pageId: '',
         accessToken: null,
         tokenExpiresAt: null,
         grantedScopes: [],
@@ -2294,6 +2602,14 @@ function App() {
     } finally {
       setIsConnectingFacebook(false)
     }
+  }
+
+  const selectFacebookPage = (pageId: string) => {
+    updateAdsMcpGateway({
+      pageId,
+      lastError: null,
+    })
+    setPublishStatusMessage('已更新 Facebook Page，之後 publish 會用這個 Page 建 ad creative。')
   }
 
   const prepareDraftForPublish = (draftId: string) => {
@@ -2363,8 +2679,12 @@ function App() {
       return
     }
 
-    if (!state.adsMcpGateway.adAccountId.trim() || !state.adsMcpGateway.pixelId.trim()) {
-      setPublishStatusMessage('請先選擇 ad account 與 pixel。')
+    if (
+      !state.adsMcpGateway.adAccountId.trim() ||
+      !state.adsMcpGateway.pixelId.trim() ||
+      !state.adsMcpGateway.pageId.trim()
+    ) {
+      setPublishStatusMessage('請先選擇 ad account、pixel 與 Facebook Page。')
       return
     }
 
@@ -2372,9 +2692,10 @@ function App() {
       state.adsMcpGateway.mode === 'remote' &&
       (!state.adsMcpGateway.endpointUrl.trim() ||
         !state.adsMcpGateway.adAccountId.trim() ||
-        !state.adsMcpGateway.pixelId.trim())
+        !state.adsMcpGateway.pixelId.trim() ||
+        !state.adsMcpGateway.pageId.trim())
     ) {
-      setPublishStatusMessage('Remote mode 需要 endpoint、ad account id、pixel id 才能送出。')
+      setPublishStatusMessage('Remote mode 需要 endpoint、ad account id、pixel id、page id 才能送出。')
       return
     }
 
@@ -2382,7 +2703,11 @@ function App() {
     setPublishingDraftId(draftId)
     setPublishStatusMessage(
       `正在送出 ${draft.publishBundle.adPayload.name} 到 ${
-        state.adsMcpGateway.mode === 'demo' ? 'demo gateway' : 'remote gateway'
+        state.adsMcpGateway.mode === 'demo'
+          ? 'demo gateway'
+          : state.adsMcpGateway.mode === 'graph_api'
+            ? 'Facebook Graph API'
+            : 'remote gateway'
       }...`,
     )
 
@@ -3286,7 +3611,7 @@ function App() {
                       onClick={() => publishDraftToAdsMcp(draft.id)}
                       disabled={publishingDraftId === draft.id}
                     >
-                      {publishingDraftId === draft.id ? 'Publishing…' : 'Publish to Ads MCP'}
+                      {publishingDraftId === draft.id ? 'Publishing…' : 'Publish to Facebook'}
                     </button>
                   ) : null}
                   {draft.status === 'publishing' ? (
@@ -3336,8 +3661,8 @@ function App() {
               </h3>
               <p className="helper-copy">
                 {state.adsMcpGateway.connectionStatus === 'connected'
-                  ? '先選 ad account 與 pixel，再往下看 live structure。'
-                  : '按下後會直接跳 Meta OAuth；授權完成後，系統會自動抓回可用的 ad account 與 pixel。'}
+                  ? '先選 ad account、pixel、Page，再往下看 live structure。'
+                  : '按下後會直接跳 Meta OAuth；授權完成後，系統會自動抓回可用的 ad account、pixel、Page。'}
               </p>
             </div>
             <div className="draft-actions">
@@ -3405,10 +3730,15 @@ function App() {
                   <strong>{selectedPixel ? selectedPixel.name : '尚未選擇'}</strong>
                 </article>
                 <article className="overview-card">
+                  <span>目前 Page</span>
+                  <strong>{selectedPage ? selectedPage.name : '尚未選擇'}</strong>
+                </article>
+                <article className="overview-card">
                   <span>可用資產</span>
                   <strong>
                     {state.adsMcpGateway.availableAdAccounts.length} accounts ·{' '}
-                    {state.adsMcpGateway.availablePixels.length} pixels
+                    {state.adsMcpGateway.availablePixels.length} pixels ·{' '}
+                    {state.adsMcpGateway.availablePages.length} pages
                   </strong>
                 </article>
               </div>
@@ -3447,6 +3777,23 @@ function App() {
                         {pixel.name} · {pixel.id}
                       </option>
                     ))}
+                  </select>
+                </label>
+                <label className="rule-field">
+                  <span>Facebook Page</span>
+                  <select
+                    value={state.adsMcpGateway.pageId}
+                    onChange={(event) => selectFacebookPage(event.target.value)}
+                  >
+                    {state.adsMcpGateway.availablePages.length > 0 ? (
+                      state.adsMcpGateway.availablePages.map((page) => (
+                        <option key={page.id} value={page.id}>
+                          {page.name} · {page.id}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">沒有抓到可用 Page，請先 Reconnect 授權 pages_show_list</option>
+                    )}
                   </select>
                 </label>
               </div>

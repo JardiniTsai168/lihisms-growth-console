@@ -34,7 +34,7 @@ export type PlacementStrategy = 'advantage_plus' | 'feeds_only' | 'stories_and_r
 
 export type AdAngleFamily = 'benefit' | 'use_case'
 
-export type AdsMcpGatewayMode = 'demo' | 'remote'
+export type AdsMcpGatewayMode = 'demo' | 'remote' | 'graph_api'
 
 export type AdsAccountOption = {
   id: string
@@ -48,6 +48,11 @@ export type AdsPixelOption = {
   name: string
 }
 
+export type AdsPageOption = {
+  id: string
+  name: string
+}
+
 export type AdsMcpGatewayConfig = {
   mode: AdsMcpGatewayMode
   endpointUrl: string
@@ -55,6 +60,7 @@ export type AdsMcpGatewayConfig = {
   graphVersion: string
   adAccountId: string
   pixelId: string
+  pageId: string
   authStrategy: 'none' | 'bearer'
   accessToken: string | null
   tokenExpiresAt: string | null
@@ -64,6 +70,7 @@ export type AdsMcpGatewayConfig = {
   businessName: string | null
   availableAdAccounts: AdsAccountOption[]
   availablePixels: AdsPixelOption[]
+  availablePages: AdsPageOption[]
   lastError: string | null
   lastValidatedAt: string | null
 }
