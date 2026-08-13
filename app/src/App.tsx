@@ -1322,28 +1322,43 @@ async function createFacebookCampaignWithFallbacks(
   adAccountId: string,
   payload: AdsMcpPayloadPreview,
 ): Promise<{ campaign: { id: string }; debug: string }> {
-  const attempts = getFacebookCampaignObjectiveCandidates(payload.campaign.objective).flatMap(
-    (objective) => [
-      {
-        label: `${objective} + ["NONE"]`,
-        fields: {
-          name: payload.campaign.name,
-          objective,
-          status: 'PAUSED',
-          special_ad_categories: JSON.stringify(['NONE']),
-        },
+  const attempts: Array<{ label: string; fields: Record<string, string> }> = []
+
+  for (const objective of getFacebookCampaignObjectiveCandidates(payload.campaign.objective)) {
+    attempts.push({
+      label: `${objective} + minimal`,
+      fields: {
+        name: payload.campaign.name,
+        objective,
       },
-      {
-        label: `${objective} + []`,
-        fields: {
-          name: payload.campaign.name,
-          objective,
-          status: 'PAUSED',
-          special_ad_categories: JSON.stringify([]),
-        },
+    })
+    attempts.push({
+      label: `${objective} + paused`,
+      fields: {
+        name: payload.campaign.name,
+        objective,
+        status: 'PAUSED',
       },
-    ],
-  )
+    })
+    attempts.push({
+      label: `${objective} + ["NONE"]`,
+      fields: {
+        name: payload.campaign.name,
+        objective,
+        status: 'PAUSED',
+        special_ad_categories: JSON.stringify(['NONE']),
+      },
+    })
+    attempts.push({
+      label: `${objective} + []`,
+      fields: {
+        name: payload.campaign.name,
+        objective,
+        status: 'PAUSED',
+        special_ad_categories: JSON.stringify([]),
+      },
+    })
+  }
 
   const errors: string[] = []
 
