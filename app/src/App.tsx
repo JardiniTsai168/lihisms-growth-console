@@ -1671,7 +1671,7 @@ async function executeAdsMcpPublish(
     name: payload.campaign.name,
     objective: mapObjectiveToAdsMcpObjective(payload.campaign.objective),
     special_ad_category: 'NONE',
-    special_ad_categories: 'NONE',
+    special_ad_categories: '[]',
     status: 'PAUSED',
     buying_type: 'AUCTION',
   })
