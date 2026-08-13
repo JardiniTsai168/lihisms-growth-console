@@ -1576,6 +1576,23 @@ function extractEntityId(
   return null
 }
 
+function requireMetaEntityId(
+  value: string | null,
+  entityLabel: 'campaign' | 'ad set' | 'ad',
+  toolName: string,
+  toolResult: McpToolCallResult,
+) {
+  if (value && !/^(cmp_|adset_|ad_)/.test(value)) {
+    return value
+  }
+
+  throw new Error(
+    `Meta Ads MCP 沒有回傳真實 ${entityLabel} id，${toolName} 可能沒有真的建立成功。Result: ${buildResponsePreview(
+      JSON.stringify(toolResult),
+    )}`,
+  )
+}
+
 function buildFacebookTargeting(bundle: PublishBundle) {
   const { ageMin, ageMax } = parseAgeRange(bundle.adSetPayload.ageRange)
   const targeting: Record<string, unknown> = {
@@ -1665,8 +1682,12 @@ async function executeAdsMcpPublish(
     campaignArgs,
   )
   const campaignData = extractMcpStructuredData(campaignResult)
-  const campaignId =
-    extractEntityId(campaignData, ['campaign_id', 'id', 'entity_id']) ?? externalCampaignId
+  const campaignId = requireMetaEntityId(
+    extractEntityId(campaignData, ['campaign_id', 'id', 'entity_id']) ?? externalCampaignId,
+    'campaign',
+    campaignTool.name,
+    campaignResult,
+  )
 
   const adSetArgs = buildArgsFromSchema(adSetTool, {
     ad_account_id: gateway.adAccountId,
@@ -1737,9 +1758,12 @@ async function executeAdsMcpPublish(
   })
   const adSetResult = await callAdsMcpTool(gateway, sessionId, adSetTool.name, adSetArgs)
   const adSetData = extractMcpStructuredData(adSetResult)
-  const createdAdSetId =
-    extractEntityId(adSetData, ['ad_set_id', 'adset_id', 'id', 'entity_id']) ??
-    externalAdSetId
+  const createdAdSetId = requireMetaEntityId(
+    extractEntityId(adSetData, ['ad_set_id', 'adset_id', 'id', 'entity_id']) ?? externalAdSetId,
+    'ad set',
+    adSetTool.name,
+    adSetResult,
+  )
 
   const adArgs = buildArgsFromSchema(adTool, {
     ad_account_id: gateway.adAccountId,
@@ -1789,8 +1813,12 @@ async function executeAdsMcpPublish(
   })
   const adResult = await callAdsMcpTool(gateway, sessionId, adTool.name, adArgs)
   const adData = extractMcpStructuredData(adResult)
-  const createdAdId =
-    extractEntityId(adData, ['ad_id', 'id', 'entity_id']) ?? externalAdId
+  const createdAdId = requireMetaEntityId(
+    extractEntityId(adData, ['ad_id', 'id', 'entity_id']) ?? externalAdId,
+    'ad',
+    adTool.name,
+    adResult,
+  )
 
   return {
     requestId,
