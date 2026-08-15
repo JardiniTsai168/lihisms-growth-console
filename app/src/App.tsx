@@ -27,6 +27,7 @@ import type {
   OptimizationRules,
   Platform,
   StrategyRecord,
+  TaiwanRegionalRegulatedCategory,
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
@@ -36,6 +37,13 @@ const META_ADS_MCP_SERVER = 'https://mcp.facebook.com/ads'
 const META_ADS_MCP_RELAY = `${CREATIVE_API_BASE}/meta-ads-mcp`
 const DEMO_PUBLISH_LATENCY_MS = 900
 const DEFAULT_DAILY_BUDGET_MINOR = 10000
+const TAIWAN_REGULATED_CATEGORY_OPTIONS: Array<{
+  value: TaiwanRegionalRegulatedCategory
+  label: string
+}> = [
+  { value: 'TAIWAN_UNIVERSAL', label: 'Taiwan universal' },
+  { value: 'TAIWAN_FINSERV', label: 'Taiwan finserv' },
+]
 
 type ReviewResponse = {
   batchId: string
@@ -436,6 +444,9 @@ function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
     adAccountId: '',
     pixelId: '',
     pageId: '',
+    taiwanRegulatedCategory: 'TAIWAN_UNIVERSAL',
+    taiwanBeneficiaryId: '',
+    taiwanPayerId: '',
     authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
     accessToken: null,
     tokenExpiresAt: null,
@@ -847,6 +858,7 @@ function buildAdsMcpPayloadPreview(bundle: {
       optimizationGoal: bundle.adSetPayload.optimizationGoal,
       budgetStrategy: bundle.adSetPayload.budgetStrategy,
       placementStrategy: bundle.adSetPayload.placementStrategy,
+      regionalRegulation: buildRegionalRegulationPayload(bundle.gateway, bundle.adSetPayload.geo),
       audience: {
         type: bundle.adSetPayload.audienceType,
         geo: bundle.adSetPayload.geo,
@@ -1037,6 +1049,10 @@ function migrateAppState(state: AppState) {
     availablePixels: storedGateway?.availablePixels ?? [],
     pageId: storedGateway?.pageId ?? '',
     availablePages: storedGateway?.availablePages ?? [],
+    taiwanRegulatedCategory:
+      storedGateway?.taiwanRegulatedCategory ?? defaultGateway.taiwanRegulatedCategory,
+    taiwanBeneficiaryId: storedGateway?.taiwanBeneficiaryId ?? '',
+    taiwanPayerId: storedGateway?.taiwanPayerId ?? '',
     lastError: storedGateway?.lastError ?? null,
   }
 
@@ -1051,6 +1067,9 @@ function migrateAppState(state: AppState) {
     !storedGateway?.availablePixels ||
     storedGateway?.pageId === undefined ||
     !storedGateway?.availablePages ||
+    storedGateway?.taiwanRegulatedCategory === undefined ||
+    storedGateway?.taiwanBeneficiaryId === undefined ||
+    storedGateway?.taiwanPayerId === undefined ||
     storedGateway?.lastError === undefined ||
     storedGateway?.appId !== appId ||
     storedGateway?.graphVersion !== graphVersion ||
@@ -1246,6 +1265,22 @@ function getCountryCode(geo: string) {
   return resolveFacebookCountryCode(geo)
 }
 
+function requiresTaiwanRegionalRegulation(geo: string) {
+  return getCountryCode(geo) === 'TW'
+}
+
+function getTaiwanRegionalIdentityKeys(category: TaiwanRegionalRegulatedCategory) {
+  return category === 'TAIWAN_FINSERV'
+    ? {
+        beneficiary: 'taiwan_finserv_beneficiary',
+        payer: 'taiwan_finserv_payer',
+      }
+    : {
+        beneficiary: 'taiwan_universal_beneficiary',
+        payer: 'taiwan_universal_payer',
+      }
+}
+
 type McpJsonRpcError = {
   code: number
   message: string
@@ -1284,6 +1319,13 @@ type McpToolCallResult = {
   content?: Array<{ type?: string; text?: string }>
   structuredContent?: Record<string, unknown>
   isError?: boolean
+}
+
+type AdsMcpToolsInspection = {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  fetchedAt: string | null
+  tools: McpToolDefinition[]
+  error: string | null
 }
 
 function getAdsMcpEndpoint(gateway: AdsMcpGatewayConfig) {
@@ -1549,8 +1591,45 @@ function buildAdsMcpPlacements(placementStrategy: PlacementStrategy) {
   }
 }
 
-function buildRegionalRegulatedCategories(geo: string) {
-  return getCountryCode(geo) === 'TW' ? ['TAIWAN_UNIVERSAL'] : undefined
+function buildRegionalRegulationPayload(
+  gateway: AdsMcpGatewayConfig,
+  geo: string,
+): AdsMcpPayloadPreview['adSet']['regionalRegulation'] {
+  if (!requiresTaiwanRegionalRegulation(geo)) {
+    return null
+  }
+
+  const category = gateway.taiwanRegulatedCategory
+  const keys = getTaiwanRegionalIdentityKeys(category)
+  const identities: Record<string, string> = {}
+
+  if (gateway.taiwanBeneficiaryId.trim()) {
+    identities[keys.beneficiary] = gateway.taiwanBeneficiaryId.trim()
+  }
+
+  if (gateway.taiwanPayerId.trim()) {
+    identities[keys.payer] = gateway.taiwanPayerId.trim()
+  }
+
+  return {
+    categories: [category],
+    identities,
+  }
+}
+
+function buildRegionalRegulatedCategories(
+  gateway: AdsMcpGatewayConfig,
+  geo: string,
+) {
+  return buildRegionalRegulationPayload(gateway, geo)?.categories
+}
+
+function buildRegionalRegulationIdentities(
+  gateway: AdsMcpGatewayConfig,
+  geo: string,
+) {
+  const identities = buildRegionalRegulationPayload(gateway, geo)?.identities
+  return identities && Object.keys(identities).length > 0 ? identities : undefined
 }
 
 function extractMcpStructuredData(result: McpToolCallResult) {
@@ -1698,12 +1777,21 @@ async function executeAdsMcpPublish(
   )
 
   if (
-    getCountryCode(payload.adSet.audience.geo) === 'TW' &&
+    requiresTaiwanRegionalRegulation(payload.adSet.audience.geo) &&
     (!toolAllowsArgument(adSetTool, 'regional_regulated_categories') ||
       !toolAllowsArgument(adSetTool, 'regional_regulation_identities'))
   ) {
     throw new Error(
-      '目前這版 Meta Ads MCP `ads_create_ad_set` tool schema 沒有開放台灣廣告申報所需欄位 `regional_regulated_categories` / `regional_regulation_identities`，所以台灣受眾 ad set 無法經由這條 MCP publish 成功。請先改走 Graph API publish，或改用非台灣 geo 測試。',
+      '這次 Meta Ads MCP session 的 `tools/list` 回傳中，`ads_create_ad_set` input schema 沒有露出台灣廣告申報所需欄位 `regional_regulated_categories` / `regional_regulation_identities`。Meta Marketing API 本身有這兩個欄位，但目前這條 MCP publish path 仍無法為台灣受眾 ad set 正常送出；請先改走 Graph API publish，或改用非台灣 geo 測試。',
+    )
+  }
+
+  if (
+    requiresTaiwanRegionalRegulation(payload.adSet.audience.geo) &&
+    (!gateway.taiwanBeneficiaryId.trim() || !gateway.taiwanPayerId.trim())
+  ) {
+    throw new Error(
+      '台灣 geo publish 需要先選 beneficiary / payer identity，才能組出 regional_regulation_identities。',
     )
   }
 
@@ -1720,7 +1808,14 @@ async function executeAdsMcpPublish(
     destination_type: 'WEBSITE',
     page_id: gateway.pageId,
     pixel_id: gateway.pixelId,
-    regional_regulated_categories: buildRegionalRegulatedCategories(payload.adSet.audience.geo),
+    regional_regulated_categories: buildRegionalRegulatedCategories(
+      gateway,
+      payload.adSet.audience.geo,
+    ),
+    regional_regulation_identities: buildRegionalRegulationIdentities(
+      gateway,
+      payload.adSet.audience.geo,
+    ),
     promoted_object: {
       pixel_id: gateway.pixelId,
       custom_event_type:
@@ -1905,9 +2000,50 @@ function App() {
   const [selectedCampaignId, setSelectedCampaignId] = useState('')
   const [selectedAdSetId, setSelectedAdSetId] = useState('')
   const [structureRefreshKey, setStructureRefreshKey] = useState(0)
+  const [toolsInspection, setToolsInspection] = useState<AdsMcpToolsInspection>({
+    status: 'idle',
+    fetchedAt: null,
+    tools: [],
+    error: null,
+  })
 
   const jumpToStructureSection = () => {
     structureSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const inspectAdsMcpTools = async () => {
+    if (!state.adsMcpGateway.accessToken) {
+      setToolsInspection({
+        status: 'error',
+        fetchedAt: null,
+        tools: [],
+        error: 'Missing Facebook access token.',
+      })
+      return
+    }
+
+    setToolsInspection((current) => ({
+      ...current,
+      status: 'loading',
+      error: null,
+    }))
+
+    try {
+      const { tools } = await initializeAdsMcpSession(state.adsMcpGateway)
+      setToolsInspection({
+        status: 'ready',
+        fetchedAt: new Date().toISOString(),
+        tools,
+        error: null,
+      })
+    } catch (error) {
+      setToolsInspection({
+        status: 'error',
+        fetchedAt: new Date().toISOString(),
+        tools: [],
+        error: error instanceof Error ? error.message : 'Failed to inspect Ads MCP tools.',
+      })
+    }
   }
 
   useEffect(() => {
@@ -2311,6 +2447,18 @@ function App() {
   const selectedPage = useMemo(() => {
     return state.adsMcpGateway.availablePages.find((page) => page.id === state.adsMcpGateway.pageId)
   }, [state.adsMcpGateway.availablePages, state.adsMcpGateway.pageId])
+  const inspectedAdSetTool = useMemo(
+    () => toolsInspection.tools.find((tool) => tool.name === 'ads_create_ad_set'),
+    [toolsInspection.tools],
+  )
+  const inspectedAdSetSchemaKeys = useMemo(
+    () => Object.keys(inspectedAdSetTool?.inputSchema?.properties ?? {}),
+    [inspectedAdSetTool],
+  )
+  const taiwanIdentityKeys = useMemo(
+    () => getTaiwanRegionalIdentityKeys(state.adsMcpGateway.taiwanRegulatedCategory),
+    [state.adsMcpGateway.taiwanRegulatedCategory],
+  )
   const activeCampaignId = useMemo(() => {
     if (accountStructureSnapshot.campaigns.some((campaign) => campaign.id === selectedCampaignId)) {
       return selectedCampaignId
@@ -3050,6 +3198,16 @@ function App() {
   const publishDraftToAdsMcp = async (draftId: string) => {
     const draft = state.drafts.find((item) => item.id === draftId)
     if (!draft) {
+      return
+    }
+
+    if (
+      requiresTaiwanRegionalRegulation(draft.publishBundle.adSetPayload.geo) &&
+      (!state.adsMcpGateway.taiwanBeneficiaryId.trim() || !state.adsMcpGateway.taiwanPayerId.trim())
+    ) {
+      setPublishStatusMessage(
+        '這份 draft 是台灣 geo，請先在 Facebook delivery setup 補 beneficiary / payer identity。',
+      )
       return
     }
 
@@ -4185,6 +4343,46 @@ function App() {
                     )}
                   </select>
                 </label>
+                <label className="rule-field">
+                  <span>Taiwan regulation</span>
+                  <select
+                    value={state.adsMcpGateway.taiwanRegulatedCategory}
+                    onChange={(event) =>
+                      updateAdsMcpGateway({
+                        taiwanRegulatedCategory: event.target.value as TaiwanRegionalRegulatedCategory,
+                      })
+                    }
+                  >
+                    {TAIWAN_REGULATED_CATEGORY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <small>台灣 geo draft 會用這個 category 來組 `regional_regulated_categories`。</small>
+                </label>
+                <label className="rule-field">
+                  <span>Beneficiary identity</span>
+                  <input
+                    type="text"
+                    placeholder={taiwanIdentityKeys.beneficiary}
+                    value={state.adsMcpGateway.taiwanBeneficiaryId}
+                    onChange={(event) =>
+                      updateAdsMcpGateway({ taiwanBeneficiaryId: event.target.value })
+                    }
+                  />
+                  <small>Meta 驗證後拿到的 beneficiary identity id。</small>
+                </label>
+                <label className="rule-field">
+                  <span>Payer identity</span>
+                  <input
+                    type="text"
+                    placeholder={taiwanIdentityKeys.payer}
+                    value={state.adsMcpGateway.taiwanPayerId}
+                    onChange={(event) => updateAdsMcpGateway({ taiwanPayerId: event.target.value })}
+                  />
+                  <small>Meta 驗證後拿到的 payer identity id。</small>
+                </label>
               </div>
             </div>
           ) : null}
@@ -4359,6 +4557,80 @@ function App() {
                   .map((account) => `${account.name} (${account.accountId})`)
                   .join(' | ')}
               </small>
+            </details>
+
+            <details className="inline-details">
+              <summary>Live MCP tools inspection</summary>
+              <div className="draft-actions">
+                <button
+                  type="button"
+                  className="mini-button"
+                  onClick={() => void inspectAdsMcpTools()}
+                  disabled={toolsInspection.status === 'loading'}
+                >
+                  {toolsInspection.status === 'loading'
+                    ? 'Inspecting tools…'
+                    : 'Inspect live MCP tools'}
+                </button>
+              </div>
+
+              <div className="builder-flow">
+                <span>Status: {toolsInspection.status}</span>
+                <span>Tools: {toolsInspection.tools.length}</span>
+                <span>
+                  Fetched:{' '}
+                  {toolsInspection.fetchedAt ? formatDate(toolsInspection.fetchedAt) : 'none'}
+                </span>
+              </div>
+
+              {toolsInspection.error ? (
+                <div className="error-banner">{toolsInspection.error}</div>
+              ) : null}
+
+              {inspectedAdSetTool ? (
+                <>
+                  <div className="builder-flow">
+                    <span>`ads_create_ad_set` fields: {inspectedAdSetSchemaKeys.length}</span>
+                    <span>
+                      has `regional_regulated_categories`:{' '}
+                      {inspectedAdSetSchemaKeys.includes('regional_regulated_categories')
+                        ? 'yes'
+                        : 'no'}
+                    </span>
+                    <span>
+                      has `regional_regulation_identities`:{' '}
+                      {inspectedAdSetSchemaKeys.includes('regional_regulation_identities')
+                        ? 'yes'
+                        : 'no'}
+                    </span>
+                  </div>
+                  <pre className="payload-preview">
+                    {JSON.stringify(
+                      {
+                        name: inspectedAdSetTool.name,
+                        description: inspectedAdSetTool.description,
+                        inputSchema: inspectedAdSetTool.inputSchema ?? null,
+                      },
+                      null,
+                      2,
+                    )}
+                  </pre>
+                </>
+              ) : null}
+
+              {toolsInspection.status === 'ready' ? (
+                <pre className="payload-preview">
+                  {JSON.stringify(
+                    toolsInspection.tools.map((tool) => ({
+                      name: tool.name,
+                      description: tool.description,
+                      inputSchema: tool.inputSchema ?? null,
+                    })),
+                    null,
+                    2,
+                  )}
+                </pre>
+              ) : null}
             </details>
 
             <div className="api-spec-grid">

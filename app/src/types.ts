@@ -53,6 +53,8 @@ export type AdsPageOption = {
   name: string
 }
 
+export type TaiwanRegionalRegulatedCategory = 'TAIWAN_UNIVERSAL' | 'TAIWAN_FINSERV'
+
 export type AdsMcpGatewayConfig = {
   mode: AdsMcpGatewayMode
   endpointUrl: string
@@ -61,6 +63,9 @@ export type AdsMcpGatewayConfig = {
   adAccountId: string
   pixelId: string
   pageId: string
+  taiwanRegulatedCategory: TaiwanRegionalRegulatedCategory
+  taiwanBeneficiaryId: string
+  taiwanPayerId: string
   authStrategy: 'none' | 'bearer'
   accessToken: string | null
   tokenExpiresAt: string | null
@@ -142,6 +147,12 @@ export type AdsMcpPayloadPreview = {
     optimizationGoal: OptimizationGoal
     budgetStrategy: BudgetStrategy
     placementStrategy: PlacementStrategy
+    regionalRegulation:
+      | {
+          categories: TaiwanRegionalRegulatedCategory[]
+          identities: Record<string, string>
+        }
+      | null
     audience: {
       type: AudienceType
       geo: string

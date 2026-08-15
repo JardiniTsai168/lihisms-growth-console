@@ -59,5 +59,6 @@ VITE_ADS_MCP_GATEWAY_URL=https://creative.bktsai.link/internal/meta-ads-mcp
 ## 風險與下一步
 
 - 目前仍需用真實帳號驗證 MCP tool schema 與參數對應
+- Meta Marketing API 的 ad set 官方欄位有 `regional_regulated_categories` / `regional_regulation_identities`；若台灣 ad set 在 MCP path 失敗，應先以當次 `tools/list` 回傳的 live input schema 判斷是不是 relay / MCP schema 尚未露出這兩個欄位，而不是直接解讀成 Meta 官方文件不支援
 - 若官方 MCP tool 的 input schema 和目前前端推斷不同，需要依 `tools/list` 回傳 schema 再細修 mapping
 - 若要更穩定，下一步建議把 MCP request / tool result diagnostics 做成更明確的 debug 面板
