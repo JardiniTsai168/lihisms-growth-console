@@ -81,6 +81,14 @@ type FormatsResponse = {
   }>
 }
 
+type RequestedCreativeFormat = {
+  platform: Platform
+  surface: string
+  aspectRatio: string
+  width: number
+  height: number
+}
+
 type AdsMcpPublishResult = {
   requestId: string
   responseCode: number
@@ -286,6 +294,113 @@ function getPlacementStrategy(platforms: Platform[]): PlacementStrategy {
   }
 
   return 'advantage_plus'
+}
+
+function buildRequestedFormats(platforms: Platform[]): RequestedCreativeFormat[] {
+  const requestedFormats: RequestedCreativeFormat[] = []
+
+  if (platforms.includes('Facebook')) {
+    requestedFormats.push({
+      platform: 'Facebook',
+      surface: 'Feed',
+      aspectRatio: '4:5',
+      width: 1080,
+      height: 1350,
+    })
+  }
+
+  if (platforms.includes('Instagram')) {
+    requestedFormats.push(
+      {
+        platform: 'Instagram',
+        surface: 'Feed',
+        aspectRatio: '4:5',
+        width: 1080,
+        height: 1350,
+      },
+      {
+        platform: 'Instagram',
+        surface: 'Story',
+        aspectRatio: '9:16',
+        width: 1080,
+        height: 1920,
+      },
+      {
+        platform: 'Instagram',
+        surface: 'Reels',
+        aspectRatio: '9:16',
+        width: 1080,
+        height: 1920,
+      },
+    )
+  }
+
+  if (platforms.includes('Threads')) {
+    requestedFormats.push({
+      platform: 'Threads',
+      surface: 'Feed',
+      aspectRatio: '4:5',
+      width: 1080,
+      height: 1350,
+    })
+  }
+
+  if (platforms.includes('Google Ads')) {
+    requestedFormats.push(
+      {
+        platform: 'Google Ads',
+        surface: 'Square',
+        aspectRatio: '1:1',
+        width: 1200,
+        height: 1200,
+      },
+      {
+        platform: 'Google Ads',
+        surface: 'Landscape',
+        aspectRatio: '1.91:1',
+        width: 1200,
+        height: 628,
+      },
+    )
+  }
+
+  return requestedFormats
+}
+
+function inferAspectRatio(width: number, height: number) {
+  if (!width || !height) {
+    return null
+  }
+
+  const ratio = width / height
+
+  if (Math.abs(ratio - 1) < 0.04) {
+    return '1:1'
+  }
+  if (Math.abs(ratio - 0.8) < 0.04) {
+    return '4:5'
+  }
+  if (Math.abs(ratio - 9 / 16) < 0.04) {
+    return '9:16'
+  }
+  if (Math.abs(ratio - 16 / 9) < 0.06) {
+    return '16:9'
+  }
+  if (Math.abs(ratio - 1.91) < 0.06) {
+    return '1.91:1'
+  }
+
+  return null
+}
+
+function normalizeReturnedAssets(assets: FormatsResponse['assetDeliverables']) {
+  return assets.map((asset) => {
+    const inferredAspectRatio = inferAspectRatio(asset.width, asset.height)
+    return {
+      ...asset,
+      aspectRatio: inferredAspectRatio ?? asset.aspectRatio,
+    }
+  })
 }
 
 function getAngleFamily(creative: CreativeAsset): AdAngleFamily {
@@ -2615,6 +2730,7 @@ function App() {
 
   const requestFormatsForCreative = async (creative: CreativeAsset) => {
     let response: Response
+    const requestedFormats = buildRequestedFormats(creative.selectedPlatforms)
 
     try {
       response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
@@ -2626,6 +2742,9 @@ function App() {
           batchId: creative.batchId,
           creativeId: creative.sourceCreativeId,
           selectedPlatforms: creative.selectedPlatforms,
+          requestedFormats,
+          strictAspectRatios: true,
+          formatStrategy: 'low_risk_extend',
         }),
       })
     } catch (error) {
@@ -2643,13 +2762,22 @@ function App() {
     return (await response.json()) as FormatsResponse
   }
 
-  const applyFormatsResult = (creativeId: string, result: FormatsResponse) => {
+  const applyFormatsResult = (creative: CreativeAsset, result: FormatsResponse) => {
     const primaryCopy = result.copyDeliverables?.meta_ad ?? result.finalCopy ?? null
+    const normalizedAssets = normalizeReturnedAssets(result.assetDeliverables)
+    const missingMetaFeedAssets = creative.selectedPlatforms.filter((platform) =>
+      ['Facebook', 'Instagram', 'Threads'].includes(platform),
+    ).filter(
+      (platform) =>
+        !normalizedAssets.some(
+          (asset) => asset.platform === platform && asset.aspectRatio === '4:5',
+        ),
+    )
 
     setState((current) => ({
       ...current,
       creatives: current.creatives.map((item) =>
-        item.id === creativeId
+        item.id === creative.id
           ? {
               ...item,
               reviewStatus: 'approved',
@@ -2657,11 +2785,17 @@ function App() {
               formatStatus: 'formats_ready',
               finalCopy: primaryCopy,
               copyDeliverables: result.copyDeliverables ?? null,
-              assetDeliverables: result.assetDeliverables,
+              assetDeliverables: normalizedAssets,
             }
           : item,
       ),
     }))
+
+    if (missingMetaFeedAssets.length > 0) {
+      setRequestError(
+        `Approved 完成，但沒拿到 ${missingMetaFeedAssets.join(', ')} 的 4:5 素材。這次已改成明確要求 4:5；如果還出錯，請再試一次讓我看新回傳。`,
+      )
+    }
   }
 
   const approveCreative = async (creativeId: string) => {
@@ -2676,7 +2810,7 @@ function App() {
 
     try {
       const result = await requestFormatsForCreative(creative)
-      applyFormatsResult(creativeId, result)
+      applyFormatsResult(creative, result)
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '版位生成失敗。')
     } finally {
@@ -2700,7 +2834,7 @@ function App() {
       for (const creative of pendingBatchCreatives) {
         try {
           const result = await requestFormatsForCreative(creative)
-          applyFormatsResult(creative.id, result)
+          applyFormatsResult(creative, result)
           successCount += 1
         } catch (error) {
           failures.push(
