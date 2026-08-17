@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
-import { initialState } from './seed'
+import { initialState, standardTagBank } from './seed'
 import type {
   AdAngleFamily,
   AnalyticsMetric,
@@ -15,6 +15,7 @@ import type {
   CopyDeliverables,
   DraftAd,
   FunnelStage,
+  LibraryKind,
   OptimizationGoal,
   PlacementStrategy,
   AdsMcpPayloadPreview,
@@ -142,6 +143,15 @@ const usd = new Intl.NumberFormat('en-US', {
   currency: 'USD',
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
+})
+
+const buildEmptyForm = () => ({
+  kind: 'use_case' as LibraryKind,
+  title: '',
+  summary: '',
+  notes: '',
+  standardTags: [] as string[],
+  freeformTags: '',
 })
 
 const buildBatchForm = (library: StrategyRecord[]) => {
@@ -1737,6 +1747,27 @@ async function executeAdsMcpPublish(
     adSetResult,
   )
 
+  const objectStorySpec = {
+    page_id: gateway.pageId,
+    link_data: {
+      message: payload.creative.primaryText,
+      name: payload.creative.headline,
+      description: payload.creative.description,
+      link: payload.creative.destinationUrl,
+      image_url: selectedImageUrl,
+      call_to_action: {
+        type: 'LEARN_MORE',
+        value: {
+          link: payload.creative.destinationUrl,
+        },
+      },
+    },
+  }
+  const creativeSource = {
+    name: `${payload.ad.name} Creative`,
+    object_story_spec: objectStorySpec,
+  }
+
   const adArgs = buildArgsFromSchema(adTool, {
     ad_account_id: gateway.adAccountId,
     account_id: gateway.adAccountId,
@@ -1751,37 +1782,9 @@ async function executeAdsMcpPublish(
     primary_text: payload.creative.primaryText,
     headline: payload.creative.headline,
     description: payload.creative.description,
-    creative: {
-      page_id: gateway.pageId,
-      primary_text: payload.creative.primaryText,
-      headline: payload.creative.headline,
-      description: payload.creative.description,
-      destination_url: payload.creative.destinationUrl,
-      link: payload.creative.destinationUrl,
-      image_url: selectedImageUrl,
-      call_to_action: {
-        type: 'LEARN_MORE',
-        value: {
-          link: payload.creative.destinationUrl,
-        },
-      },
-    },
-    object_story_spec: {
-      page_id: gateway.pageId,
-      link_data: {
-        message: payload.creative.primaryText,
-        name: payload.creative.headline,
-        description: payload.creative.description,
-        link: payload.creative.destinationUrl,
-        image_url: selectedImageUrl,
-        call_to_action: {
-          type: 'LEARN_MORE',
-          value: {
-            link: payload.creative.destinationUrl,
-          },
-        },
-      },
-    },
+    creative: creativeSource,
+    creative_spec: creativeSource,
+    object_story_spec: objectStorySpec,
   })
   const adResult = await callAdsMcpTool(gateway, sessionId, adTool.name, adArgs)
   const adData = extractMcpStructuredData(adResult)
@@ -1831,6 +1834,8 @@ function App() {
   const state = useMemo(() => migrateAppState(persistedState), [persistedState])
   const reviewSectionRef = useRef<HTMLElement | null>(null)
   const structureSectionRef = useRef<HTMLDivElement | null>(null)
+  const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
+  const [form, setForm] = useState(buildEmptyForm)
   const [batchForm, setBatchForm] = useState(() => buildBatchForm(initialState.library))
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [productImageFile, setProductImageFile] = useState<File | null>(null)
@@ -1854,6 +1859,7 @@ function App() {
     })
   const [selectedCampaignId, setSelectedCampaignId] = useState('')
   const [selectedAdSetId, setSelectedAdSetId] = useState('')
+  const [selectedAdId, setSelectedAdId] = useState('')
   const [structureRefreshKey, setStructureRefreshKey] = useState(0)
 
   const jumpToStructureSection = () => {
@@ -2297,6 +2303,25 @@ function App() {
   const publishableDrafts = state.drafts.filter(
     (draft) => draft.status === 'ready_to_publish' || draft.status === 'publishing',
   )
+  const selectedCampaign = useMemo(
+    () => accountStructureSnapshot.campaigns.find((campaign) => campaign.id === activeCampaignId) ?? null,
+    [accountStructureSnapshot.campaigns, activeCampaignId],
+  )
+  const selectedAdSet = useMemo(
+    () => campaignScopedAdSets.find((adSet) => adSet.id === activeAdSetId) ?? null,
+    [campaignScopedAdSets, activeAdSetId],
+  )
+  const activeAdId = useMemo(() => {
+    if (adSetScopedAds.some((ad) => ad.id === selectedAdId)) {
+      return selectedAdId
+    }
+
+    return adSetScopedAds[0]?.id ?? ''
+  }, [adSetScopedAds, selectedAdId])
+  const selectedAd = useMemo(
+    () => adSetScopedAds.find((ad) => ad.id === activeAdId) ?? null,
+    [activeAdId, adSetScopedAds],
+  )
 
   useEffect(() => {
     if (!isGeneratingBatch && batchCreatives.length === 0) {
@@ -2308,6 +2333,79 @@ function App() {
       block: 'start',
     })
   }, [batchCreatives.length, isGeneratingBatch])
+
+  useEffect(() => {
+    const useCases = activeLibrary.filter((record) => record.kind === 'use_case')
+    const benefits = activeLibrary.filter((record) => record.kind === 'benefit')
+    const benefitIds = new Set(benefits.map((record) => record.id))
+
+    setBatchForm((current) => {
+      const nextUseCaseId = useCases.some((record) => record.id === current.useCaseId)
+        ? current.useCaseId
+        : (useCases[0]?.id ?? '')
+      const nextBenefitIds = current.benefitIds.filter((id) => benefitIds.has(id))
+      const normalizedBenefitIds =
+        nextBenefitIds.length > 0 ? nextBenefitIds : benefits.slice(0, 3).map((record) => record.id)
+
+      if (
+        nextUseCaseId === current.useCaseId &&
+        normalizedBenefitIds.length === current.benefitIds.length &&
+        normalizedBenefitIds.every((id, index) => id === current.benefitIds[index])
+      ) {
+        return current
+      }
+
+      return {
+        ...current,
+        useCaseId: nextUseCaseId,
+        benefitIds: normalizedBenefitIds,
+      }
+    })
+  }, [activeLibrary])
+
+  const handleSaveRecord = () => {
+    if (!form.title.trim() || !form.summary.trim()) {
+      setRequestError('新增 use case / benefit 前，至少要填標題跟摘要。')
+      return
+    }
+
+    const timestamp = new Date().toISOString()
+    const nextRecord: StrategyRecord = {
+      id: `record-${slugify(form.kind)}-${slugify(form.title)}-${Date.now().toString(36)}`,
+      kind: form.kind,
+      title: form.title.trim(),
+      summary: form.summary.trim(),
+      notes: form.notes.trim(),
+      standardTags: form.standardTags,
+      freeformTags: form.freeformTags
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      status: 'active',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+
+    setState((current) => ({
+      ...current,
+      library: [nextRecord, ...current.library],
+    }))
+    setBatchForm((current) =>
+      nextRecord.kind === 'use_case'
+        ? { ...current, useCaseId: nextRecord.id }
+        : current.benefitIds.length < 5 && !current.benefitIds.includes(nextRecord.id)
+          ? { ...current, benefitIds: [...current.benefitIds, nextRecord.id].slice(0, 5) }
+          : current,
+    )
+    setSelectedKind(nextRecord.kind)
+    setForm(buildEmptyForm())
+    setRequestError(null)
+    setBatchStatusMessage(
+      nextRecord.kind === 'use_case'
+        ? `已新增 use case「${nextRecord.title}」，也幫你切成這次 batch 的主軸。`
+        : `已新增 benefit「${nextRecord.title}」。`,
+    )
+  }
 
   const handleUseCaseChange = (useCaseId: string) => {
     setBatchForm((current) => ({
@@ -3096,6 +3194,8 @@ function App() {
 
   const resetDemo = () => {
     setState(initialState)
+    setSelectedKind('use_case')
+    setForm(buildEmptyForm())
     setBatchForm(buildBatchForm(initialState.library))
     setLogoFile(null)
     setProductImageFile(null)
@@ -3103,6 +3203,9 @@ function App() {
     setBatchStatusMessage(null)
     setIsGeneratingBatch(false)
     setApprovingCreativeId(null)
+    setSelectedCampaignId('')
+    setSelectedAdSetId('')
+    setSelectedAdId('')
   }
 
   return (
@@ -3150,7 +3253,8 @@ function App() {
           </div>
 
           <div className="launch-layout">
-            <div className="builder-grid">
+            <div className="launch-builder-stack">
+              <div className="builder-grid">
               <label>
                 Use case
                 <select
@@ -3258,8 +3362,141 @@ function App() {
                       additionalNotes: event.target.value,
                     }))
                   }
-                />
-              </label>
+                  />
+                </label>
+              </div>
+
+              <aside className="editor-card library-editor-card">
+                <div className="library-inline-header">
+                  <div>
+                    <p className="eyebrow">Use case / benefit editor</p>
+                    <h3>直接在這裡補 library</h3>
+                  </div>
+                  <div className="library-inline-actions">
+                    {(['use_case', 'benefit'] as LibraryKind[]).map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        className={selectedKind === kind ? 'chip active' : 'chip'}
+                        onClick={() => {
+                          setSelectedKind(kind)
+                          setForm((current) => ({
+                            ...current,
+                            kind,
+                            standardTags: [],
+                          }))
+                        }}
+                      >
+                        {kind === 'use_case' ? 'Use case' : 'Benefit'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="library-inline-list">
+                  {activeLibrary
+                    .filter((record) => record.kind === selectedKind)
+                    .slice(0, 6)
+                    .map((record) => (
+                      <button
+                        key={record.id}
+                        type="button"
+                        className={`library-inline-pill ${
+                          selectedKind === 'use_case' && batchForm.useCaseId === record.id ? 'active' : ''
+                        }`}
+                        onClick={() => {
+                          if (record.kind === 'use_case') {
+                            handleUseCaseChange(record.id)
+                          }
+                        }}
+                      >
+                        {record.title}
+                      </button>
+                    ))}
+                </div>
+
+                <label>
+                  Title
+                  <input
+                    placeholder={selectedKind === 'use_case' ? '例如 檔期預告' : '例如 回流可追蹤'}
+                    value={form.title}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, kind: selectedKind, title: event.target.value }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Summary
+                  <textarea
+                    rows={3}
+                    placeholder="描述這個 use case / benefit 主要要解的事"
+                    value={form.summary}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        kind: selectedKind,
+                        summary: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <div>
+                  <span className="field-label">Standard tags</span>
+                  <div className="checkbox-grid">
+                    {standardTagBank[selectedKind].map((tag) => (
+                      <label key={tag} className="check-chip">
+                        <input
+                          type="checkbox"
+                          checked={form.standardTags.includes(tag)}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              kind: selectedKind,
+                              standardTags: event.target.checked
+                                ? [...current.standardTags, tag]
+                                : current.standardTags.filter((item) => item !== tag),
+                            }))
+                          }
+                        />
+                        <span>{tag}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <label>
+                  Freeform tags
+                  <input
+                    placeholder="comma, separated"
+                    value={form.freeformTags}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        kind: selectedKind,
+                        freeformTags: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Notes
+                  <textarea
+                    rows={2}
+                    placeholder="可選，補充內部備註"
+                    value={form.notes}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, kind: selectedKind, notes: event.target.value }))
+                    }
+                  />
+                </label>
+
+                <button className="primary-button" type="button" onClick={handleSaveRecord}>
+                  {selectedKind === 'use_case' ? 'Save use case' : 'Save benefit'}
+                </button>
+              </aside>
             </div>
 
             <aside className="focus-rail">
@@ -3782,7 +4019,8 @@ function App() {
 
               {accountStructureSnapshot.status === 'ready' &&
               accountStructureSnapshot.campaigns.length > 0 ? (
-                <div className="account-structure-grid">
+                <>
+                  <div className="account-structure-grid">
                   <article className="structure-card">
                     <div className="structure-card-header">
                       <h4>Campaigns</h4>
@@ -3801,12 +4039,14 @@ function App() {
                             onClick={() => {
                               setSelectedCampaignId(campaign.id)
                               setSelectedAdSetId('')
+                              setSelectedAdId('')
                             }}
                           >
                             <div className="structure-row-title">{campaign.name}</div>
                             <div className="structure-row-meta">{campaign.objective}</div>
-                            <div className="structure-row-meta">
-                              {campaign.status} / {campaign.effectiveStatus}
+                            <div className="structure-row-pills">
+                              <span className="tag subtle">{campaign.status}</span>
+                              <span className="tag subtle">{campaign.effectiveStatus}</span>
                             </div>
                             <div className="structure-row-meta">
                               {stats?.adSetCount ?? 0} ad sets · {stats?.adCount ?? 0} ads
@@ -3834,12 +4074,16 @@ function App() {
                             key={adSet.id}
                             type="button"
                             className={`structure-row ${adSet.id === activeAdSetId ? 'selected' : ''}`}
-                            onClick={() => setSelectedAdSetId(adSet.id)}
+                            onClick={() => {
+                              setSelectedAdSetId(adSet.id)
+                              setSelectedAdId('')
+                            }}
                           >
                             <div className="structure-row-title">{adSet.name}</div>
                             <div className="structure-row-meta">{adSet.optimizationGoal}</div>
-                            <div className="structure-row-meta">
-                              {adSet.status} / {adSet.effectiveStatus}
+                            <div className="structure-row-pills">
+                              <span className="tag subtle">{adSet.status}</span>
+                              <span className="tag subtle">{adSet.effectiveStatus}</span>
                             </div>
                             <div className="structure-row-meta">
                               Budget:{' '}
@@ -3869,18 +4113,87 @@ function App() {
                     ) : (
                       <div className="structure-list">
                         {adSetScopedAds.map((ad) => (
-                          <div key={ad.id} className="structure-row static">
+                          <button
+                            key={ad.id}
+                            type="button"
+                            className={`structure-row ${ad.id === activeAdId ? 'selected' : ''}`}
+                            onClick={() => setSelectedAdId(ad.id)}
+                          >
                             <div className="structure-row-title">{ad.name}</div>
-                            <div className="structure-row-meta">
-                              {ad.status} / {ad.effectiveStatus}
+                            <div className="structure-row-pills">
+                              <span className="tag subtle">{ad.status}</span>
+                              <span className="tag subtle">{ad.effectiveStatus}</span>
                             </div>
                             <div className="structure-row-meta">ID: {ad.id}</div>
-                          </div>
+                          </button>
                         ))}
                       </div>
                     )}
                   </article>
-                </div>
+                  </div>
+
+                  <div className="structure-detail-grid">
+                  <article className="detail-card">
+                    <p className="eyebrow">Selected campaign</p>
+                    <h4>{selectedCampaign?.name ?? '尚未選 campaign'}</h4>
+                    {selectedCampaign ? (
+                      <div className="detail-kv">
+                        <span>Objective</span>
+                        <strong>{selectedCampaign.objective}</strong>
+                        <span>Status</span>
+                        <strong>{selectedCampaign.status}</strong>
+                        <span>Effective</span>
+                        <strong>{selectedCampaign.effectiveStatus}</strong>
+                        <span>Coverage</span>
+                        <strong>
+                          {(campaignStats.get(selectedCampaign.id)?.adSetCount ?? 0)} ad sets /{' '}
+                          {(campaignStats.get(selectedCampaign.id)?.adCount ?? 0)} ads
+                        </strong>
+                      </div>
+                    ) : null}
+                  </article>
+
+                  <article className="detail-card">
+                    <p className="eyebrow">Selected ad set</p>
+                    <h4>{selectedAdSet?.name ?? '尚未選 ad set'}</h4>
+                    {selectedAdSet ? (
+                      <div className="detail-kv">
+                        <span>Optimization</span>
+                        <strong>{selectedAdSet.optimizationGoal}</strong>
+                        <span>Status</span>
+                        <strong>{selectedAdSet.status}</strong>
+                        <span>Budget</span>
+                        <strong>
+                          {selectedAdSet.dailyBudget
+                            ? `daily ${selectedAdSet.dailyBudget}`
+                            : selectedAdSet.lifetimeBudget
+                              ? `lifetime ${selectedAdSet.lifetimeBudget}`
+                              : 'not set'}
+                        </strong>
+                        <span>Ads</span>
+                        <strong>{adSetStats.get(selectedAdSet.id) ?? 0}</strong>
+                      </div>
+                    ) : null}
+                  </article>
+
+                  <article className="detail-card">
+                    <p className="eyebrow">Selected ad</p>
+                    <h4>{selectedAd?.name ?? '尚未選 ad'}</h4>
+                    {selectedAd ? (
+                      <div className="detail-kv">
+                        <span>Status</span>
+                        <strong>{selectedAd.status}</strong>
+                        <span>Effective</span>
+                        <strong>{selectedAd.effectiveStatus}</strong>
+                        <span>Ad ID</span>
+                        <strong>{selectedAd.id}</strong>
+                        <span>Parent ad set</span>
+                        <strong>{selectedAd.adSetId}</strong>
+                      </div>
+                    ) : null}
+                  </article>
+                  </div>
+                </>
               ) : accountStructureSnapshot.status === 'loading' ? (
                 <article className="creative-empty-state compact">
                   <h3>正在抓 account structure</h3>
