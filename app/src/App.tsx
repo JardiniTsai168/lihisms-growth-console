@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
-import { initialState, standardTagBank } from './seed'
-import { buildRecommendations } from './recommendations'
+import { initialState } from './seed'
 import type {
   AdAngleFamily,
   AnalyticsMetric,
   AdsMcpGatewayConfig,
-  AdsMcpGatewayRequest,
-  AdsMcpGatewayResponse,
   AppState,
   AdsPageOption,
   AudienceType,
@@ -18,16 +15,13 @@ import type {
   CopyDeliverables,
   DraftAd,
   FunnelStage,
-  LibraryKind,
   OptimizationGoal,
   PlacementStrategy,
   AdsMcpPayloadPreview,
   PublishAssetSelection,
   PublishBundle,
-  OptimizationRules,
   Platform,
   StrategyRecord,
-  TaiwanRegionalRegulatedCategory,
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
@@ -37,13 +31,7 @@ const META_ADS_MCP_SERVER = 'https://mcp.facebook.com/ads'
 const META_ADS_MCP_RELAY = `${CREATIVE_API_BASE}/meta-ads-mcp`
 const DEMO_PUBLISH_LATENCY_MS = 900
 const DEFAULT_DAILY_BUDGET_MINOR = 10000
-const TAIWAN_REGULATED_CATEGORY_OPTIONS: Array<{
-  value: TaiwanRegionalRegulatedCategory
-  label: string
-}> = [
-  { value: 'TAIWAN_UNIVERSAL', label: 'Taiwan universal' },
-  { value: 'TAIWAN_FINSERV', label: 'Taiwan finserv' },
-]
+const ADS_MCP_TAIWAN_FALLBACK_GEO = 'US'
 
 type ReviewResponse = {
   batchId: string
@@ -101,11 +89,6 @@ type AdsMcpPublishResult = {
   externalAdId: string
 }
 
-type AdsGatewayContractPreview = {
-  request: AdsMcpGatewayRequest
-  response: AdsMcpGatewayResponse
-}
-
 type FacebookCampaignSnapshot = {
   id: string
   name: string
@@ -159,15 +142,6 @@ const usd = new Intl.NumberFormat('en-US', {
   currency: 'USD',
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
-})
-
-const buildEmptyForm = () => ({
-  kind: 'use_case' as LibraryKind,
-  title: '',
-  summary: '',
-  notes: '',
-  standardTags: [] as string[],
-  freeformTags: '',
 })
 
 const buildBatchForm = (library: StrategyRecord[]) => {
@@ -444,9 +418,6 @@ function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
     adAccountId: '',
     pixelId: '',
     pageId: '',
-    taiwanRegulatedCategory: 'TAIWAN_UNIVERSAL',
-    taiwanBeneficiaryId: '',
-    taiwanPayerId: '',
     authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
     accessToken: null,
     tokenExpiresAt: null,
@@ -807,27 +778,6 @@ async function fetchFacebookAccountStructure(
   }
 }
 
-function buildAdsMcpGatewayRequest(payload: AdsMcpPayloadPreview): AdsMcpGatewayRequest {
-  return {
-    server: META_ADS_MCP_SERVER,
-    operation: 'ads_mcp_tool_sequence_preview',
-    payload,
-  }
-}
-
-function buildAdsGatewayContractPreview(payload: AdsMcpPayloadPreview): AdsGatewayContractPreview {
-  return {
-    request: buildAdsMcpGatewayRequest(payload),
-    response: {
-      requestId: 'req_demo_123456',
-      campaignId: 'cmp_abc123',
-      adSetId: 'adset_def456',
-      adId: 'ad_xyz789',
-      status: 'accepted',
-    },
-  }
-}
-
 function buildAdsMcpPayloadPreview(bundle: {
   gateway: AdsMcpGatewayConfig
   campaignPayload: PublishBundle['campaignPayload']
@@ -837,6 +787,8 @@ function buildAdsMcpPayloadPreview(bundle: {
   assetSelections: PublishAssetSelection[]
   status: DraftAd['status']
 }): AdsMcpPayloadPreview {
+  const effectiveGeo = getAdsMcpPublishGeo(bundle.adSetPayload.geo)
+
   return {
     server: 'meta_ads_mcp',
     version: 'draft_v1',
@@ -858,10 +810,9 @@ function buildAdsMcpPayloadPreview(bundle: {
       optimizationGoal: bundle.adSetPayload.optimizationGoal,
       budgetStrategy: bundle.adSetPayload.budgetStrategy,
       placementStrategy: bundle.adSetPayload.placementStrategy,
-      regionalRegulation: buildRegionalRegulationPayload(bundle.gateway, bundle.adSetPayload.geo),
       audience: {
         type: bundle.adSetPayload.audienceType,
-        geo: bundle.adSetPayload.geo,
+        geo: effectiveGeo,
         ageRange: bundle.adSetPayload.ageRange,
         windowDays: bundle.adSetPayload.audienceWindowDays,
       },
@@ -1049,10 +1000,6 @@ function migrateAppState(state: AppState) {
     availablePixels: storedGateway?.availablePixels ?? [],
     pageId: storedGateway?.pageId ?? '',
     availablePages: storedGateway?.availablePages ?? [],
-    taiwanRegulatedCategory:
-      storedGateway?.taiwanRegulatedCategory ?? defaultGateway.taiwanRegulatedCategory,
-    taiwanBeneficiaryId: storedGateway?.taiwanBeneficiaryId ?? '',
-    taiwanPayerId: storedGateway?.taiwanPayerId ?? '',
     lastError: storedGateway?.lastError ?? null,
   }
 
@@ -1067,9 +1014,6 @@ function migrateAppState(state: AppState) {
     !storedGateway?.availablePixels ||
     storedGateway?.pageId === undefined ||
     !storedGateway?.availablePages ||
-    storedGateway?.taiwanRegulatedCategory === undefined ||
-    storedGateway?.taiwanBeneficiaryId === undefined ||
-    storedGateway?.taiwanPayerId === undefined ||
     storedGateway?.lastError === undefined ||
     storedGateway?.appId !== appId ||
     storedGateway?.graphVersion !== graphVersion ||
@@ -1269,16 +1213,8 @@ function requiresTaiwanRegionalRegulation(geo: string) {
   return getCountryCode(geo) === 'TW'
 }
 
-function getTaiwanRegionalIdentityKeys(category: TaiwanRegionalRegulatedCategory) {
-  return category === 'TAIWAN_FINSERV'
-    ? {
-        beneficiary: 'taiwan_finserv_beneficiary',
-        payer: 'taiwan_finserv_payer',
-      }
-    : {
-        beneficiary: 'taiwan_universal_beneficiary',
-        payer: 'taiwan_universal_payer',
-      }
+function getAdsMcpPublishGeo(geo: string) {
+  return requiresTaiwanRegionalRegulation(geo) ? ADS_MCP_TAIWAN_FALLBACK_GEO : geo
 }
 
 type McpJsonRpcError = {
@@ -1319,13 +1255,6 @@ type McpToolCallResult = {
   content?: Array<{ type?: string; text?: string }>
   structuredContent?: Record<string, unknown>
   isError?: boolean
-}
-
-type AdsMcpToolsInspection = {
-  status: 'idle' | 'loading' | 'ready' | 'error'
-  fetchedAt: string | null
-  tools: McpToolDefinition[]
-  error: string | null
 }
 
 function getAdsMcpEndpoint(gateway: AdsMcpGatewayConfig) {
@@ -1571,10 +1500,6 @@ function buildArgsFromSchema(
   return args
 }
 
-function toolAllowsArgument(tool: McpToolDefinition | undefined, argumentName: string) {
-  return Boolean(tool?.inputSchema?.properties?.[argumentName])
-}
-
 function buildAdsMcpPlacements(placementStrategy: PlacementStrategy) {
   if (placementStrategy === 'stories_and_reels') {
     return {
@@ -1589,47 +1514,6 @@ function buildAdsMcpPlacements(placementStrategy: PlacementStrategy) {
     facebook_positions: ['feed'],
     instagram_positions: ['stream'],
   }
-}
-
-function buildRegionalRegulationPayload(
-  gateway: AdsMcpGatewayConfig,
-  geo: string,
-): AdsMcpPayloadPreview['adSet']['regionalRegulation'] {
-  if (!requiresTaiwanRegionalRegulation(geo)) {
-    return null
-  }
-
-  const category = gateway.taiwanRegulatedCategory
-  const keys = getTaiwanRegionalIdentityKeys(category)
-  const identities: Record<string, string> = {}
-
-  if (gateway.taiwanBeneficiaryId.trim()) {
-    identities[keys.beneficiary] = gateway.taiwanBeneficiaryId.trim()
-  }
-
-  if (gateway.taiwanPayerId.trim()) {
-    identities[keys.payer] = gateway.taiwanPayerId.trim()
-  }
-
-  return {
-    categories: [category],
-    identities,
-  }
-}
-
-function buildRegionalRegulatedCategories(
-  gateway: AdsMcpGatewayConfig,
-  geo: string,
-) {
-  return buildRegionalRegulationPayload(gateway, geo)?.categories
-}
-
-function buildRegionalRegulationIdentities(
-  gateway: AdsMcpGatewayConfig,
-  geo: string,
-) {
-  const identities = buildRegionalRegulationPayload(gateway, geo)?.identities
-  return identities && Object.keys(identities).length > 0 ? identities : undefined
 }
 
 function extractMcpStructuredData(result: McpToolCallResult) {
@@ -1775,25 +1659,7 @@ async function executeAdsMcpPublish(
     campaignTool.name,
     campaignResult,
   )
-
-  if (
-    requiresTaiwanRegionalRegulation(payload.adSet.audience.geo) &&
-    (!toolAllowsArgument(adSetTool, 'regional_regulated_categories') ||
-      !toolAllowsArgument(adSetTool, 'regional_regulation_identities'))
-  ) {
-    throw new Error(
-      '這次 Meta Ads MCP session 的 `tools/list` 回傳中，`ads_create_ad_set` input schema 沒有露出台灣廣告申報所需欄位 `regional_regulated_categories` / `regional_regulation_identities`。Meta Marketing API 本身有這兩個欄位，但目前這條 MCP publish path 仍無法為台灣受眾 ad set 正常送出；請先改走 Graph API publish，或改用非台灣 geo 測試。',
-    )
-  }
-
-  if (
-    requiresTaiwanRegionalRegulation(payload.adSet.audience.geo) &&
-    (!gateway.taiwanBeneficiaryId.trim() || !gateway.taiwanPayerId.trim())
-  ) {
-    throw new Error(
-      '台灣 geo publish 需要先選 beneficiary / payer identity，才能組出 regional_regulation_identities。',
-    )
-  }
+  const publishGeo = getAdsMcpPublishGeo(payload.adSet.audience.geo)
 
   const adSetArgs = buildArgsFromSchema(adSetTool, {
     ad_account_id: gateway.adAccountId,
@@ -1808,14 +1674,6 @@ async function executeAdsMcpPublish(
     destination_type: 'WEBSITE',
     page_id: gateway.pageId,
     pixel_id: gateway.pixelId,
-    regional_regulated_categories: buildRegionalRegulatedCategories(
-      gateway,
-      payload.adSet.audience.geo,
-    ),
-    regional_regulation_identities: buildRegionalRegulationIdentities(
-      gateway,
-      payload.adSet.audience.geo,
-    ),
     promoted_object: {
       pixel_id: gateway.pixelId,
       custom_event_type:
@@ -1827,7 +1685,7 @@ async function executeAdsMcpPublish(
           name: payload.campaign.name,
           objective: payload.campaign.objective,
           funnelStage: 'prospecting',
-          market: payload.adSet.audience.geo,
+          market: publishGeo,
           buyingType: 'auction',
         },
         adSetPayload: {
@@ -1837,7 +1695,7 @@ async function executeAdsMcpPublish(
           budgetStrategy: payload.adSet.budgetStrategy,
           optimizationGoal: payload.adSet.optimizationGoal,
           placementStrategy: payload.adSet.placementStrategy,
-          geo: payload.adSet.audience.geo,
+          geo: publishGeo,
           ageRange: payload.adSet.audience.ageRange,
         },
         adPayload: {
@@ -1973,9 +1831,6 @@ function App() {
   const state = useMemo(() => migrateAppState(persistedState), [persistedState])
   const reviewSectionRef = useRef<HTMLElement | null>(null)
   const structureSectionRef = useRef<HTMLDivElement | null>(null)
-  const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState(buildEmptyForm)
   const [batchForm, setBatchForm] = useState(() => buildBatchForm(initialState.library))
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [productImageFile, setProductImageFile] = useState<File | null>(null)
@@ -2000,50 +1855,9 @@ function App() {
   const [selectedCampaignId, setSelectedCampaignId] = useState('')
   const [selectedAdSetId, setSelectedAdSetId] = useState('')
   const [structureRefreshKey, setStructureRefreshKey] = useState(0)
-  const [toolsInspection, setToolsInspection] = useState<AdsMcpToolsInspection>({
-    status: 'idle',
-    fetchedAt: null,
-    tools: [],
-    error: null,
-  })
 
   const jumpToStructureSection = () => {
     structureSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-
-  const inspectAdsMcpTools = async () => {
-    if (!state.adsMcpGateway.accessToken) {
-      setToolsInspection({
-        status: 'error',
-        fetchedAt: null,
-        tools: [],
-        error: 'Missing Facebook access token.',
-      })
-      return
-    }
-
-    setToolsInspection((current) => ({
-      ...current,
-      status: 'loading',
-      error: null,
-    }))
-
-    try {
-      const { tools } = await initializeAdsMcpSession(state.adsMcpGateway)
-      setToolsInspection({
-        status: 'ready',
-        fetchedAt: new Date().toISOString(),
-        tools,
-        error: null,
-      })
-    } catch (error) {
-      setToolsInspection({
-        status: 'error',
-        fetchedAt: new Date().toISOString(),
-        tools: [],
-        error: error instanceof Error ? error.message : 'Failed to inspect Ads MCP tools.',
-      })
-    }
   }
 
   useEffect(() => {
@@ -2385,20 +2199,12 @@ function App() {
     )
   }, [state.metrics])
 
-  const recommendations = useMemo(
-    () => buildRecommendations(state.drafts, state.metrics, state.rules),
-    [state.drafts, state.metrics, state.rules],
-  )
-
   const selectedBatchPlatforms = Array.from(
     new Set(batchCreatives.flatMap((creative) => creative.selectedPlatforms)),
   )
   const pendingBatchCreatives = batchCreatives.filter(
     (creative) => creative.selectedPlatforms.length > 0 && creative.assetDeliverables.length === 0,
   )
-  const latestBatchDrafts = latestBatch
-    ? state.drafts.filter((draft) => draft.batchId === latestBatch.id)
-    : []
   const filteredAdAccounts = useMemo(() => {
     const query = adAccountQuery.trim().toLowerCase()
     if (!query) {
@@ -2447,18 +2253,6 @@ function App() {
   const selectedPage = useMemo(() => {
     return state.adsMcpGateway.availablePages.find((page) => page.id === state.adsMcpGateway.pageId)
   }, [state.adsMcpGateway.availablePages, state.adsMcpGateway.pageId])
-  const inspectedAdSetTool = useMemo(
-    () => toolsInspection.tools.find((tool) => tool.name === 'ads_create_ad_set'),
-    [toolsInspection.tools],
-  )
-  const inspectedAdSetSchemaKeys = useMemo(
-    () => Object.keys(inspectedAdSetTool?.inputSchema?.properties ?? {}),
-    [inspectedAdSetTool],
-  )
-  const taiwanIdentityKeys = useMemo(
-    () => getTaiwanRegionalIdentityKeys(state.adsMcpGateway.taiwanRegulatedCategory),
-    [state.adsMcpGateway.taiwanRegulatedCategory],
-  )
   const activeCampaignId = useMemo(() => {
     if (accountStructureSnapshot.campaigns.some((campaign) => campaign.id === selectedCampaignId)) {
       return selectedCampaignId
@@ -2503,78 +2297,6 @@ function App() {
   const publishableDrafts = state.drafts.filter(
     (draft) => draft.status === 'ready_to_publish' || draft.status === 'publishing',
   )
-  const gatewayContractPreview = publishableDrafts[0]
-    ? buildAdsGatewayContractPreview(publishableDrafts[0].publishBundle.adsMcpPayload)
-    : null
-  const metaBundleCreatives = useMemo(() => {
-    return batchCreatives
-      .filter((creative) => creative.reviewStatus === 'approved')
-      .map((creative) => {
-        const prioritizedAssets = [...creative.assetDeliverables].sort((left, right) => {
-          return Number(isMetaPlatform(right.platform)) - Number(isMetaPlatform(left.platform))
-        })
-        const metaAssetCount = creative.assetDeliverables.filter((asset) =>
-          isMetaPlatform(asset.platform),
-        ).length
-        const metaCopy = creative.copyDeliverables?.meta_ad ?? creative.finalCopy
-
-        return {
-          creative,
-          prioritizedAssets,
-          metaAssetCount,
-          metaCopy,
-        }
-      })
-      .filter((entry) => entry.metaCopy || entry.prioritizedAssets.length > 0)
-  }, [batchCreatives])
-  const validationChecks = useMemo(() => {
-    const reviewReturned = batchCreatives.length > 0
-    const allPlatformsSelected =
-      batchCreatives.length > 0 &&
-      batchCreatives.every((creative) => creative.selectedPlatforms.length > 0)
-    const allFormatsReady =
-      batchCreatives.length > 0 &&
-      batchCreatives.every(
-        (creative) =>
-          creative.reviewStatus === 'approved' &&
-          creative.assetDeliverables.length > 0 &&
-          Boolean(creative.copyDeliverables?.meta_ad ?? creative.finalCopy),
-      )
-    const draftsBuilt = latestBatch
-      ? latestBatchDrafts.length === batchCreatives.length && batchCreatives.length > 0
-      : false
-
-    return [
-      {
-        label: 'Stage 1 review 已回來',
-        detail: reviewReturned
-          ? `${batchCreatives.length} 組 creative 已回傳`
-          : '還沒有 review creatives',
-        done: reviewReturned,
-      },
-      {
-        label: '平台已選齊',
-        detail: allPlatformsSelected
-          ? '這一批每張 creative 都已有平台'
-          : '還有 creative 尚未選平台',
-        done: allPlatformsSelected,
-      },
-      {
-        label: 'Meta 版位與文案已回來',
-        detail: allFormatsReady
-          ? '每張 creative 都已有 Meta copy 與展開版位'
-          : '還有 creative 尚未完成 generate-formats',
-        done: allFormatsReady,
-      },
-      {
-        label: 'Draft 已建好',
-        detail: draftsBuilt
-          ? `${latestBatchDrafts.length} 組 draft 已建立`
-          : '還沒把這批 approved creatives 建成 draft',
-        done: draftsBuilt,
-      },
-    ]
-  }, [batchCreatives, latestBatch, latestBatchDrafts])
 
   useEffect(() => {
     if (!isGeneratingBatch && batchCreatives.length === 0) {
@@ -2586,63 +2308,6 @@ function App() {
       block: 'start',
     })
   }, [batchCreatives.length, isGeneratingBatch])
-
-  const handleSaveRecord = () => {
-    if (!form.title.trim() || !form.summary.trim()) {
-      return
-    }
-
-    const timestamp = new Date().toISOString()
-    const nextRecord: StrategyRecord = {
-      id: editingId ?? `record-${timestamp}`,
-      kind: form.kind,
-      title: form.title.trim(),
-      summary: form.summary.trim(),
-      notes: form.notes.trim(),
-      standardTags: form.standardTags,
-      freeformTags: form.freeformTags
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-      status: 'active',
-      createdAt:
-        state.library.find((record) => record.id === editingId)?.createdAt ?? timestamp,
-      updatedAt: timestamp,
-    }
-
-    setState((current) => ({
-      ...current,
-      library: editingId
-        ? current.library.map((record) =>
-            record.id === editingId ? nextRecord : record,
-          )
-        : [nextRecord, ...current.library],
-    }))
-
-    setEditingId(null)
-    setForm(buildEmptyForm())
-  }
-
-  const handleEditRecord = (record: StrategyRecord) => {
-    setEditingId(record.id)
-    setForm({
-      kind: record.kind,
-      title: record.title,
-      summary: record.summary,
-      notes: record.notes,
-      standardTags: record.standardTags,
-      freeformTags: record.freeformTags.join(', '),
-    })
-  }
-
-  const handleArchiveRecord = (recordId: string) => {
-    setState((current) => ({
-      ...current,
-      library: current.library.map((record) =>
-        record.id === recordId ? { ...record, status: 'archived' } : record,
-      ),
-    }))
-  }
 
   const handleUseCaseChange = (useCaseId: string) => {
     setBatchForm((current) => ({
@@ -3201,16 +2866,6 @@ function App() {
       return
     }
 
-    if (
-      requiresTaiwanRegionalRegulation(draft.publishBundle.adSetPayload.geo) &&
-      (!state.adsMcpGateway.taiwanBeneficiaryId.trim() || !state.adsMcpGateway.taiwanPayerId.trim())
-    ) {
-      setPublishStatusMessage(
-        '這份 draft 是台灣 geo，請先在 Facebook delivery setup 補 beneficiary / payer identity。',
-      )
-      return
-    }
-
     if (state.adsMcpGateway.connectionStatus !== 'connected') {
       setPublishStatusMessage('請先完成 Facebook 連線，再送出 publish。')
       return
@@ -3439,20 +3094,8 @@ function App() {
     }))
   }
 
-  const updateRules = (patch: Partial<OptimizationRules>) => {
-    setState((current) => ({
-      ...current,
-      rules: {
-        ...current.rules,
-        ...patch,
-      },
-    }))
-  }
-
   const resetDemo = () => {
     setState(initialState)
-    setEditingId(null)
-    setForm(buildEmptyForm())
     setBatchForm(buildBatchForm(initialState.library))
     setLogoFile(null)
     setProductImageFile(null)
@@ -3466,339 +3109,189 @@ function App() {
     <div className="shell">
       <header className="hero-panel">
         <div className="brand-cluster">
-          <img
-            className="brand-mark"
-            src={logoUrl}
-            alt="lihi"
-          />
+          <img className="brand-mark" src={logoUrl} alt="lihi" />
           <div>
             <p className="eyebrow">lihiSMS growth operating console</p>
-            <h1>把素材、draft、數據、建議，收進同一條可回溯的成長流水線。</h1>
+            <h1>把生成、審稿、draft、publish 收進一條更短的投放流程。</h1>
             <p className="hero-note">
-              系統先把 use case、benefits、產品連結與補充內容送進
-              {' '}
-              creative.bktsai.link，先回 1:1 審稿，再由你選平台與核准延伸版位。
+              先產 1:1 審稿、核准後補齊版位、最後整理成 Facebook draft。主畫面只留會直接影響投放的資訊。
             </p>
           </div>
-          <div className="hero-metrics">
+          <div className="hero-steps">
             <article>
-              <span>Main KPI</span>
-              <strong>email verified signup</strong>
+              <span>01</span>
+              <strong>Generate batch</strong>
             </article>
             <article>
-              <span>Main ICP</span>
-              <strong>電商品牌</strong>
+              <span>02</span>
+              <strong>Approve creatives</strong>
             </article>
             <article>
-              <span>Control mode</span>
-              <strong>先審稿，再補齊版位與 draft</strong>
+              <span>03</span>
+              <strong>Publish paused drafts</strong>
             </article>
           </div>
         </div>
-
-        <section className="hero-contract" aria-label="Operating contract">
-          <div className="hero-contract-header">
-            <p className="eyebrow">Operating contract</p>
-            <h2>第一版邊界</h2>
-          </div>
-          <ul>
-            <li>每次送 1 個 use case，搭配 3 到 5 個 benefits。</li>
-            <li>必帶產品或服務連結，logo 必填，產品圖可選填。</li>
-            <li>creative.bktsai.link 先回傳文案與 1:1，審核通過再補其他尺寸。</li>
-            <li>選好平台後按 Approved，最後再 Build drafts from approved creatives。</li>
-          </ul>
-        </section>
       </header>
 
-      <main className="dashboard">
-        <section className="panel span-two">
+      <main className="dashboard dashboard-refined">
+        <section className="panel span-two panel-priority">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">01 / Strategy library</p>
-              <h2>策略資料庫</h2>
+              <p className="eyebrow">01 / Launch batch</p>
+              <h2>先把這次要投的素材批次建出來</h2>
             </div>
-            <button className="ghost-button" type="button" onClick={resetDemo}>
-              Reset demo state
-            </button>
+            <div className="header-actions">
+              <span className="pill active">creative.bktsai.link live bridge</span>
+              <button className="ghost-button" type="button" onClick={resetDemo}>
+                Reset demo state
+              </button>
+            </div>
           </div>
 
-          <div className="library-layout">
-            <div className="library-stack">
-              <div className="library-filters">
-                {(['use_case', 'benefit'] as LibraryKind[]).map(
-                  (kind) => (
-                    <button
-                      key={kind}
-                      type="button"
-                      className={selectedKind === kind ? 'chip active' : 'chip'}
-                      onClick={() => setSelectedKind(kind)}
-                    >
-                      {kind}
-                    </button>
-                  ),
-                )}
-              </div>
-
-              <div className="library-list">
-                {state.library
-                  .filter((record) => record.kind === selectedKind)
-                  .map((record) => (
-                    <article key={record.id} className="library-card">
-                      <div className="library-card-top">
-                        <div>
-                          <h3>{record.title}</h3>
-                          <p>{record.summary}</p>
-                        </div>
-                        <span className={record.status === 'active' ? 'pill active' : 'pill muted'}>
-                          {record.status}
-                        </span>
-                      </div>
-                      <div className="tag-row">
-                        {record.standardTags.map((tag) => (
-                          <span key={tag} className="tag">
-                            {tag}
-                          </span>
-                        ))}
-                        {record.freeformTags.map((tag) => (
-                          <span key={tag} className="tag subtle">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="library-card-actions">
-                        <button type="button" className="mini-button" onClick={() => handleEditRecord(record)}>
-                          Edit
-                        </button>
-                        {record.status === 'active' ? (
-                          <button
-                            type="button"
-                            className="mini-button danger"
-                            onClick={() => handleArchiveRecord(record.id)}
-                          >
-                            Archive
-                          </button>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
-              </div>
-            </div>
-
-            <aside className="editor-card">
-              <p className="eyebrow">{editingId ? 'Edit record' : 'Add record'}</p>
+          <div className="launch-layout">
+            <div className="builder-grid">
               <label>
-                Kind
+                Use case
                 <select
-                  value={form.kind}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      kind: event.target.value as LibraryKind,
-                      standardTags: [],
-                    }))
-                  }
+                  value={batchForm.useCaseId}
+                  onChange={(event) => handleUseCaseChange(event.target.value)}
                 >
-                  <option value="use_case">use_case</option>
-                  <option value="benefit">benefit</option>
+                  {activeLibrary
+                    .filter((record) => record.kind === 'use_case')
+                    .map((record) => (
+                      <option key={record.id} value={record.id}>
+                        {record.title}
+                      </option>
+                    ))}
                 </select>
               </label>
+
+              <div>
+                <span className="field-label">Benefits (3-5)</span>
+                <div className="checkbox-grid">
+                  {activeLibrary
+                    .filter((record) => record.kind === 'benefit')
+                    .map((record) => (
+                      <label key={record.id} className="check-chip">
+                        <input
+                          type="checkbox"
+                          checked={batchForm.benefitIds.includes(record.id)}
+                          onChange={(event) =>
+                            setBatchForm((current) => {
+                              const next = event.target.checked
+                                ? [...current.benefitIds, record.id].slice(0, 5)
+                                : current.benefitIds.filter((id) => id !== record.id)
+                              return { ...current, benefitIds: next }
+                            })
+                          }
+                        />
+                        <span>{record.title}</span>
+                      </label>
+                    ))}
+                </div>
+                <p className="helper-copy">最少選 3 個，最多 5 個 benefits。</p>
+              </div>
+
               <label>
-                Title
+                產品名稱
                 <input
-                  value={form.title}
+                  placeholder="例如 lihiSMS"
+                  value={batchForm.productName}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, title: event.target.value }))
+                    setBatchForm((current) => ({
+                      ...current,
+                      productName: event.target.value,
+                    }))
                   }
                 />
               </label>
+
               <label>
-                Summary
+                Product / service link
+                <input
+                  placeholder="https://..."
+                  value={batchForm.productLink}
+                  onChange={(event) =>
+                    setBatchForm((current) => ({
+                      ...current,
+                      productLink: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              <div className="asset-grid">
+                <label>
+                  Logo required
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => handleAssetUpload('logoAsset', event.target.files)}
+                  />
+                  <span className="helper-copy">
+                    {batchForm.logoAsset ? `已上傳：${batchForm.logoAsset}` : '請上傳 logo 圖檔'}
+                  </span>
+                </label>
+                <label>
+                  Product image optional
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => handleAssetUpload('productAsset', event.target.files)}
+                  />
+                  <span className="helper-copy">
+                    {batchForm.productAsset ? `已上傳：${batchForm.productAsset}` : '可選填產品圖檔'}
+                  </span>
+                </label>
+              </div>
+
+              <label>
+                其他想補充內容
                 <textarea
                   rows={4}
-                  value={form.summary}
+                  placeholder="例如想強調轉單、避免太硬銷、或指定某些產品賣點"
+                  value={batchForm.additionalNotes}
                   onChange={(event) =>
-                    setForm((current) => ({
+                    setBatchForm((current) => ({
                       ...current,
-                      summary: event.target.value,
+                      additionalNotes: event.target.value,
                     }))
                   }
                 />
               </label>
-              <div>
-                <span className="field-label">Standard tags</span>
-                <div className="checkbox-grid">
-                  {standardTagBank[form.kind].map((tag) => (
-                    <label key={tag} className="check-chip">
-                      <input
-                        type="checkbox"
-                        checked={form.standardTags.includes(tag)}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            standardTags: event.target.checked
-                              ? [...current.standardTags, tag]
-                              : current.standardTags.filter((item) => item !== tag),
-                          }))
-                        }
-                      />
-                      <span>{tag}</span>
-                    </label>
-                  ))}
+            </div>
+
+            <aside className="focus-rail">
+              <article className="focus-card">
+                <p className="eyebrow">Current setup</p>
+                <h3>
+                  {activeLibrary.find((record) => record.id === batchForm.useCaseId)?.title ?? '尚未選 use case'}
+                </h3>
+                <p className="helper-copy">
+                  先決定這次的 use case，再用 3 到 5 個 benefits 組出一個清楚主軸。
+                </p>
+                <div className="tag-row">
+                  {batchForm.benefitIds
+                    .map((id) => activeLibrary.find((record) => record.id === id))
+                    .filter((record): record is StrategyRecord => Boolean(record))
+                    .map((record) => (
+                      <span key={record.id} className="tag">
+                        {record.title}
+                      </span>
+                    ))}
                 </div>
-              </div>
-              <label>
-                Freeform tags
-                <input
-                  placeholder="comma, separated, notes"
-                  value={form.freeformTags}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      freeformTags: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Notes
-                <textarea
-                  rows={3}
-                  value={form.notes}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, notes: event.target.value }))
-                  }
-                />
-              </label>
-              <button className="primary-button" type="button" onClick={handleSaveRecord}>
-                {editingId ? 'Update record' : 'Save record'}
-              </button>
+              </article>
+
+              <article className="focus-card subdued">
+                <p className="eyebrow">Quick status</p>
+                <div className="focus-metrics">
+                  <span>Use cases {activeLibrary.filter((record) => record.kind === 'use_case').length}</span>
+                  <span>Benefits {activeLibrary.filter((record) => record.kind === 'benefit').length}</span>
+                  <span>Latest batch {latestBatch ? formatDate(latestBatch.createdAt) : 'none'}</span>
+                </div>
+              </article>
             </aside>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">02 / Creative batch</p>
-              <h2>素材批次生成</h2>
-            </div>
-            <span className="pill active">creative.bktsai.link live bridge</span>
-          </div>
-
-          <div className="builder-grid">
-            <label>
-              Use case
-              <select
-                value={batchForm.useCaseId}
-                onChange={(event) => handleUseCaseChange(event.target.value)}
-              >
-                {activeLibrary
-                  .filter((record) => record.kind === 'use_case')
-                  .map((record) => (
-                    <option key={record.id} value={record.id}>
-                      {record.title}
-                    </option>
-                  ))}
-              </select>
-            </label>
-
-            <div>
-              <span className="field-label">Benefits (3-5)</span>
-              <div className="checkbox-grid">
-                {activeLibrary
-                  .filter((record) => record.kind === 'benefit')
-                  .map((record) => (
-                    <label key={record.id} className="check-chip">
-                      <input
-                        type="checkbox"
-                        checked={batchForm.benefitIds.includes(record.id)}
-                        onChange={(event) =>
-                          setBatchForm((current) => {
-                            const next = event.target.checked
-                              ? [...current.benefitIds, record.id].slice(0, 5)
-                              : current.benefitIds.filter((id) => id !== record.id)
-                            return { ...current, benefitIds: next }
-                          })
-                        }
-                      />
-                      <span>{record.title}</span>
-                    </label>
-                  ))}
-              </div>
-              <p className="helper-copy">最少選 3 個，最多 5 個 benefits。</p>
-            </div>
-
-            <label>
-              產品名稱
-              <input
-                placeholder="例如 lihiSMS"
-                value={batchForm.productName}
-                onChange={(event) =>
-                  setBatchForm((current) => ({
-                    ...current,
-                    productName: event.target.value,
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              Product / service link
-              <input
-                placeholder="https://..."
-                value={batchForm.productLink}
-                onChange={(event) =>
-                  setBatchForm((current) => ({
-                    ...current,
-                    productLink: event.target.value,
-                  }))
-                }
-              />
-            </label>
-
-            <div className="asset-grid">
-              <label>
-                Logo required
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => handleAssetUpload('logoAsset', event.target.files)}
-                />
-                <span className="helper-copy">
-                  {batchForm.logoAsset
-                    ? `已上傳：${batchForm.logoAsset}`
-                    : '請上傳 logo 圖檔'}
-                </span>
-              </label>
-              <label>
-                Product image optional
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => handleAssetUpload('productAsset', event.target.files)}
-                />
-                <span className="helper-copy">
-                  {batchForm.productAsset
-                    ? `已上傳：${batchForm.productAsset}`
-                    : '可選填產品圖檔'}
-                </span>
-              </label>
-            </div>
-
-            <label>
-              其他想補充內容
-              <textarea
-                rows={4}
-                placeholder="例如想強調轉單、避免太硬銷、或指定某些產品賣點"
-                value={batchForm.additionalNotes}
-                onChange={(event) =>
-                  setBatchForm((current) => ({
-                    ...current,
-                    additionalNotes: event.target.value,
-                  }))
-                }
-              />
-            </label>
           </div>
 
           <button
@@ -3822,11 +3315,11 @@ function App() {
           ) : null}
         </section>
 
-        <section ref={reviewSectionRef} className="panel span-two">
+        <section ref={reviewSectionRef} className="panel span-two panel-priority">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">03 / Review + platform approval</p>
-              <h2>人工審核、平台選擇、回傳剩餘版型</h2>
+              <p className="eyebrow">02 / Review + approve</p>
+              <h2>挑出可投的版本，再補齊對應平台尺寸</h2>
             </div>
             <span className="pill muted">平台整批共用</span>
           </div>
@@ -3989,102 +3482,11 @@ function App() {
           </div>
         </section>
 
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">04 / Flow validation</p>
-              <h2>完整流程驗收</h2>
-            </div>
-            <span className="pill muted">latest batch only</span>
-          </div>
-
-          <div className="validation-grid">
-            {validationChecks.map((check) => (
-              <article
-                key={check.label}
-                className={check.done ? 'validation-card is-done' : 'validation-card'}
-              >
-                <span className={check.done ? 'pill active' : 'pill muted'}>
-                  {check.done ? 'done' : 'pending'}
-                </span>
-                <h3>{check.label}</h3>
-                <p>{check.detail}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
         <section className="panel span-two">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">05 / Meta delivery bundle</p>
-              <h2>素材交付檢查</h2>
-            </div>
-            <span className="pill active">Meta first, keep all assets</span>
-          </div>
-
-          {metaBundleCreatives.length === 0 ? (
-            <article className="creative-empty-state">
-              <h3>還沒有可交付的素材 bundle</h3>
-              <p>先完成 Approved，讓 creative.bktsai.link 回文案與對應版位。</p>
-            </article>
-          ) : (
-            <div className="meta-bundle-grid">
-              {metaBundleCreatives.map(({ creative, prioritizedAssets, metaAssetCount, metaCopy }) => (
-                <article key={`meta-bundle-${creative.id}`} className="draft-card">
-                  <div>
-                    <p className="eyebrow">{creative.creativeVersion}</p>
-                    <h3>{creative.headline}</h3>
-                    <p className="helper-copy">{creative.metadata.productName}</p>
-                  </div>
-
-                  <div className="tag-row">
-                    <span className="tag">All assets {prioritizedAssets.length}</span>
-                    <span className="tag">Meta assets {metaAssetCount}</span>
-                    <span className="tag">已選平台 {creative.selectedPlatforms.join(', ')}</span>
-                  </div>
-
-                  {metaCopy ? (
-                    <div className="draft-schema">
-                      <span>Primary text: {metaCopy.primaryText}</span>
-                      <span>Headline: {metaCopy.headline}</span>
-                      <span>Description: {metaCopy.description || 'none'}</span>
-                      <span>URL: {metaCopy.destinationUrl || 'none'}</span>
-                    </div>
-                  ) : (
-                    <p className="helper-copy">尚未回傳 Meta 文案。</p>
-                  )}
-
-                  <div className="returned-assets">
-                    {prioritizedAssets.map((asset) => (
-                      <a
-                        key={`meta-${creative.id}-${asset.platform}-${asset.surface}-${asset.aspectRatio}`}
-                        className="returned-asset-card"
-                        href={asset.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <strong>
-                          <PlatformBadge platform={getPlatformLabel(asset.platform)} compact />
-                        </strong>
-                        <span>{isMetaPlatform(asset.platform) ? 'Meta priority' : 'Other placement'}</span>
-                        <span>{asset.surface}</span>
-                        <span>{asset.aspectRatio}</span>
-                        <span>{asset.width} × {asset.height}</span>
-                      </a>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">06 / Draft builder</p>
-              <h2>Draft ad studio</h2>
+              <p className="eyebrow">03 / Draft builder</p>
+              <h2>把核准素材整理成可以 publish 的 draft</h2>
             </div>
             <button className="primary-button" type="button" onClick={createDraftAds}>
               Build drafts from approved creatives
@@ -4095,7 +3497,7 @@ function App() {
             Ready for draft: {approvedReadyForDraft.length} approved creatives with platforms selected
           </p>
 
-          <div className="draft-list">
+          <div className="draft-list compact-drafts">
             {state.drafts.map((draft) => (
               <article key={draft.id} className="draft-card">
                 <div>
@@ -4192,8 +3594,8 @@ function App() {
         <section className="panel span-two">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">07 / Ads MCP gateway</p>
-              <h2>Facebook delivery setup</h2>
+              <p className="eyebrow">04 / Facebook publish</p>
+              <h2>連線 Facebook，確認帳號後直接送出</h2>
             </div>
             <span className="pill active">{state.adsMcpGateway.connectionStatus}</span>
           </div>
@@ -4342,46 +3744,6 @@ function App() {
                       <option value="">沒有抓到可用 Page，請先 Reconnect 授權 pages_show_list</option>
                     )}
                   </select>
-                </label>
-                <label className="rule-field">
-                  <span>Taiwan regulation</span>
-                  <select
-                    value={state.adsMcpGateway.taiwanRegulatedCategory}
-                    onChange={(event) =>
-                      updateAdsMcpGateway({
-                        taiwanRegulatedCategory: event.target.value as TaiwanRegionalRegulatedCategory,
-                      })
-                    }
-                  >
-                    {TAIWAN_REGULATED_CATEGORY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <small>台灣 geo draft 會用這個 category 來組 `regional_regulated_categories`。</small>
-                </label>
-                <label className="rule-field">
-                  <span>Beneficiary identity</span>
-                  <input
-                    type="text"
-                    placeholder={taiwanIdentityKeys.beneficiary}
-                    value={state.adsMcpGateway.taiwanBeneficiaryId}
-                    onChange={(event) =>
-                      updateAdsMcpGateway({ taiwanBeneficiaryId: event.target.value })
-                    }
-                  />
-                  <small>Meta 驗證後拿到的 beneficiary identity id。</small>
-                </label>
-                <label className="rule-field">
-                  <span>Payer identity</span>
-                  <input
-                    type="text"
-                    placeholder={taiwanIdentityKeys.payer}
-                    value={state.adsMcpGateway.taiwanPayerId}
-                    onChange={(event) => updateAdsMcpGateway({ taiwanPayerId: event.target.value })}
-                  />
-                  <small>Meta 驗證後拿到的 payer identity id。</small>
                 </label>
               </div>
             </div>
@@ -4533,161 +3895,22 @@ function App() {
             </div>
           ) : null}
 
-          <details className="advanced-panel">
-            <summary>進階連線與 Ads MCP 資訊</summary>
-            <div className="builder-flow">
-              <span>Connection mode: {state.adsMcpGateway.mode}</span>
-              <span>Graph API: {state.adsMcpGateway.graphVersion}</span>
-              <span>Meta Ads MCP server: {META_ADS_MCP_SERVER}</span>
-              <span>
-                Last success:{' '}
-                {state.adsMcpGateway.lastValidatedAt
-                  ? formatDate(state.adsMcpGateway.lastValidatedAt)
-                  : 'none'}
-              </span>
-              {state.adsMcpGateway.tokenExpiresAt ? (
-                <span>Token expires: {formatDate(state.adsMcpGateway.tokenExpiresAt)}</span>
-              ) : null}
+          <div className="publish-review-shell">
+            <div className="panel-header compact">
+              <div>
+                <p className="eyebrow">Ready bundles</p>
+                <h3>可以直接送出的 draft</h3>
+              </div>
+              <span className="pill active">{publishableDrafts.length} drafts</span>
             </div>
 
-            <details className="inline-details">
-              <summary>Account diagnostics</summary>
-              <small>
-                {state.adsMcpGateway.availableAdAccounts
-                  .map((account) => `${account.name} (${account.accountId})`)
-                  .join(' | ')}
-              </small>
-            </details>
-
-            <details className="inline-details">
-              <summary>Live MCP tools inspection</summary>
-              <div className="draft-actions">
-                <button
-                  type="button"
-                  className="mini-button"
-                  onClick={() => void inspectAdsMcpTools()}
-                  disabled={toolsInspection.status === 'loading'}
-                >
-                  {toolsInspection.status === 'loading'
-                    ? 'Inspecting tools…'
-                    : 'Inspect live MCP tools'}
-                </button>
-              </div>
-
-              <div className="builder-flow">
-                <span>Status: {toolsInspection.status}</span>
-                <span>Tools: {toolsInspection.tools.length}</span>
-                <span>
-                  Fetched:{' '}
-                  {toolsInspection.fetchedAt ? formatDate(toolsInspection.fetchedAt) : 'none'}
-                </span>
-              </div>
-
-              {toolsInspection.error ? (
-                <div className="error-banner">{toolsInspection.error}</div>
-              ) : null}
-
-              {inspectedAdSetTool ? (
-                <>
-                  <div className="builder-flow">
-                    <span>`ads_create_ad_set` fields: {inspectedAdSetSchemaKeys.length}</span>
-                    <span>
-                      has `regional_regulated_categories`:{' '}
-                      {inspectedAdSetSchemaKeys.includes('regional_regulated_categories')
-                        ? 'yes'
-                        : 'no'}
-                    </span>
-                    <span>
-                      has `regional_regulation_identities`:{' '}
-                      {inspectedAdSetSchemaKeys.includes('regional_regulation_identities')
-                        ? 'yes'
-                        : 'no'}
-                    </span>
-                  </div>
-                  <pre className="payload-preview">
-                    {JSON.stringify(
-                      {
-                        name: inspectedAdSetTool.name,
-                        description: inspectedAdSetTool.description,
-                        inputSchema: inspectedAdSetTool.inputSchema ?? null,
-                      },
-                      null,
-                      2,
-                    )}
-                  </pre>
-                </>
-              ) : null}
-
-              {toolsInspection.status === 'ready' ? (
-                <pre className="payload-preview">
-                  {JSON.stringify(
-                    toolsInspection.tools.map((tool) => ({
-                      name: tool.name,
-                      description: tool.description,
-                      inputSchema: tool.inputSchema ?? null,
-                    })),
-                    null,
-                    2,
-                  )}
-                </pre>
-              ) : null}
-            </details>
-
-            <div className="api-spec-grid">
-              <article className="api-spec-card">
-                <h3>Official MCP flow</h3>
-                <p>publish 時會先 `initialize`，再 `tools/list`，最後依序呼叫 `ads_create_campaign / ad_set / ad`。</p>
-              </article>
-              <article className="api-spec-card">
-                <h3>Write path</h3>
-                <p>正式寫入已不再走前端手拼 Graph API，而是直接走 Meta Ads MCP tools。</p>
-              </article>
-              <article className="api-spec-card">
-                <h3>Failure behavior</h3>
-                <p>MCP tool call 失敗時，draft 會進 `failed`，並保留 server 回傳的錯誤訊息。</p>
-              </article>
-            </div>
-
-            {gatewayContractPreview ? (
-              <div className="gateway-contract-grid">
-                <article>
-                  <p className="eyebrow">prepared payload</p>
-                  <pre className="payload-preview">
-                    {JSON.stringify(gatewayContractPreview.request, null, 2)}
-                  </pre>
-                </article>
-                <article>
-                  <p className="eyebrow">publish result shape</p>
-                  <pre className="payload-preview">
-                    {JSON.stringify(gatewayContractPreview.response, null, 2)}
-                  </pre>
-                </article>
-              </div>
-            ) : (
+            {publishableDrafts.length === 0 ? (
               <article className="creative-empty-state compact">
-                <h3>還沒有 payload sample</h3>
-                <p>先把 draft prepare 成 ready_to_publish，這裡就會帶出目前準備送進 Ads MCP 的 payload。</p>
+                <h3>還沒有 ready 的 publish bundle</h3>
+                <p>先在上面把 draft prepare 成 ready_to_publish。</p>
               </article>
-            )}
-          </details>
-        </section>
-
-        <section className="panel span-two">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">08 / Publish review</p>
-              <h2>Ready-to-publish bundles</h2>
-            </div>
-            <span className="pill active">{publishableDrafts.length} drafts</span>
-          </div>
-
-          {publishableDrafts.length === 0 ? (
-            <article className="creative-empty-state">
-              <h3>還沒有 ready 的 publish bundle</h3>
-              <p>先在 Draft ad studio 按 `Prepare publish bundle`，確認 bundle 狀態。</p>
-            </article>
-          ) : (
-            <div className="publish-review-grid">
+            ) : (
+              <div className="publish-review-grid">
               {publishableDrafts.map((draft) => (
                 <article key={`publish-${draft.id}`} className="draft-card">
                   <div>
@@ -4754,15 +3977,16 @@ function App() {
                   </details>
                 </article>
               ))}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </section>
 
         <section className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">09 / Funnel analytics</p>
-              <h2>核心漏斗與 Airbyte 回流</h2>
+              <p className="eyebrow">05 / Performance pulse</p>
+              <h2>只保留目前最需要看的成效摘要</h2>
             </div>
             <button className="primary-button" type="button" onClick={syncAirbyteDemo}>
               Run demo Airbyte sync
@@ -4816,92 +4040,8 @@ function App() {
             })}
           </div>
         </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">10 / Optimization rules</p>
-              <h2>固定門檻</h2>
-            </div>
-            <span className="pill muted">rule-based only</span>
-          </div>
-          <div className="rules-grid">
-            <RuleField
-              label="Min spending"
-              value={state.rules.minSpend}
-              onChange={(value) => updateRules({ minSpend: value })}
-            />
-            <RuleField
-              label="CTR Goal"
-              value={state.rules.ctrGoal}
-              onChange={(value) => updateRules({ ctrGoal: value })}
-            />
-            <RuleField
-              label="Max CPA"
-              value={state.rules.maxCpa}
-              onChange={(value) => updateRules({ maxCpa: value })}
-            />
-            <RuleField
-              label="Frequency"
-              value={state.rules.maxFrequency}
-              onChange={(value) => updateRules({ maxFrequency: value })}
-            />
-          </div>
-        </section>
-
-        <section className="panel span-two">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">11 / Next-step recommendations</p>
-              <h2>系統建議，不自動執行</h2>
-            </div>
-            <span className="pill active">You hold final override</span>
-          </div>
-
-          <div className="recommendation-grid">
-            {recommendations.length === 0 ? (
-              <article className="recommendation-card neutral">
-                <h3>還沒有建議</h3>
-                <p>先把 approved creative 建成 draft、標記 published，再跑一次 demo Airbyte sync。</p>
-              </article>
-            ) : (
-              recommendations.map((recommendation) => (
-                <article
-                  key={`${recommendation.kind}-${recommendation.title}`}
-                  className={`recommendation-card ${recommendation.kind}`}
-                >
-                  <p className="eyebrow">{recommendation.kind}</p>
-                  <h3>{recommendation.title}</h3>
-                  <p>{recommendation.body}</p>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
       </main>
     </div>
-  )
-}
-
-function RuleField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: number
-  onChange: (value: number) => void
-}) {
-  return (
-    <label className="rule-field">
-      <span>{label}</span>
-      <input
-        type="number"
-        step="0.1"
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-    </label>
   )
 }
 
