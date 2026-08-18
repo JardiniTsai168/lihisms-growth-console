@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { listApprovedArchive, upsertApprovedArchive } from './archiveDb'
+import { getArchiveMode, loadArchiveItems, saveArchiveItem } from './archiveClient'
 import { initialState, standardTagBank } from './seed'
 import type {
   AppState,
@@ -283,6 +283,7 @@ function App() {
   const logoUrl = `${import.meta.env.BASE_URL}lihi-logo-primary.png`
   const [state, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
   const [archive, setArchive] = useState<ApprovedArchiveItem[]>([])
+  const [archiveMode, setArchiveMode] = useState<'server' | 'indexeddb'>(getArchiveMode)
   const [archiveStatus, setArchiveStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [archiveError, setArchiveError] = useState<string | null>(null)
   const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
@@ -340,9 +341,10 @@ function App() {
 
     const run = async () => {
       try {
-        const rows = await listApprovedArchive()
+        const result = await loadArchiveItems()
         if (cancelled) return
-        setArchive(rows)
+        setArchive(result.items)
+        setArchiveMode(result.mode)
         setArchiveStatus('ready')
       } catch (error) {
         if (cancelled) return
@@ -376,8 +378,9 @@ function App() {
 
   const loadArchive = async (message?: string) => {
     try {
-      const rows = await listApprovedArchive()
-      setArchive(rows)
+      const result = await loadArchiveItems()
+      setArchive(result.items)
+      setArchiveMode(result.mode)
       setArchiveStatus('ready')
       setArchiveError(null)
       if (message) {
@@ -617,8 +620,10 @@ function App() {
         ...current,
         creatives: current.creatives.map((item) => (item.id === creativeId ? approvedCreative : item)),
       }))
-      await upsertApprovedArchive(buildArchiveRecord(approvedCreative))
-      await loadArchive(`已將 ${approvedCreative.creativeVersion} 存進 approved archive。`)
+      const saveResult = await saveArchiveItem(buildArchiveRecord(approvedCreative))
+      await loadArchive(
+        `已將 ${approvedCreative.creativeVersion} 存進 ${saveResult.mode === 'server' ? 'server DB' : 'indexeddb'} archive。`,
+      )
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : 'approve 失敗。')
     } finally {
@@ -660,7 +665,7 @@ function App() {
             ...current,
             creatives: current.creatives.map((item) => (item.id === creative.id ? approvedCreative : item)),
           }))
-          await upsertApprovedArchive(buildArchiveRecord(approvedCreative))
+          await saveArchiveItem(buildArchiveRecord(approvedCreative))
           successCount += 1
         } catch (error) {
           failures.push(error instanceof Error ? `${creative.creativeVersion}: ${error.message}` : creative.creativeVersion)
@@ -1078,6 +1083,7 @@ function App() {
 
         <div className="archive-banner">
           <span>DB status: {archiveStatus}</span>
+          <span>mode: {archiveMode}</span>
           <span>{archive.length} rows</span>
           <span>來源條件：只有 approved creative 才會寫入</span>
         </div>

@@ -1,0 +1,10 @@
+{
+  "name": "lihisms-approved-archive-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch index.mjs",
+    "start": "node index.mjs"
+  }
+}

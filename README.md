@@ -29,6 +29,15 @@ pnpm install
 pnpm dev
 ```
 
+### Local archive API
+
+```bash
+cd server
+node index.mjs
+```
+
+The server persists approved creatives into `server/data/approved-archive.sqlite`.
+
 ### Build
 
 ```bash

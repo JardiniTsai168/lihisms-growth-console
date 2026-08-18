@@ -5,4 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   base: process.env.GITHUB_ACTIONS ? '/lihisms-growth-console/' : '/',
   plugins: [react()],
+  preview: {
+    allowedHosts: true,
+  },
 })
