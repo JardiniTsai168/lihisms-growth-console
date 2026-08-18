@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm --prefix app install && npm --prefix app run build"
+    "build": "npm --prefix app install && npm --prefix app run build && rm -rf dist && cp -R app/dist ./dist"
   }
 }
