@@ -1,0 +1,8 @@
+{
+  "name": "lihisms-growth-console",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix app install && npm --prefix app run build"
+  }
+}
