@@ -1,38 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import { listApprovedArchive, upsertApprovedArchive } from './archiveDb'
 import { initialState, standardTagBank } from './seed'
 import type {
-  AdAngleFamily,
-  AnalyticsMetric,
-  AdsMcpGatewayConfig,
   AppState,
-  AdsPageOption,
-  AudienceType,
-  BudgetStrategy,
-  CampaignObjective,
+  ApprovedArchiveItem,
+  AssetDeliverable,
+  CopyDeliverables,
   CreativeAsset,
   CreativeBatch,
-  CopyDeliverables,
-  DraftAd,
-  FunnelStage,
   LibraryKind,
-  OptimizationGoal,
-  PlacementStrategy,
-  AdsMcpPayloadPreview,
-  PublishAssetSelection,
-  PublishBundle,
   Platform,
   StrategyRecord,
 } from './types'
 import { usePersistentState } from './usePersistentState'
 
-const STORAGE_KEY = 'lihisms-growth-console-v7'
+const STORAGE_KEY = 'lihisms-growth-console-v8'
 const CREATIVE_API_BASE = 'https://creative.bktsai.link/internal'
-const META_ADS_MCP_SERVER = 'https://mcp.facebook.com/ads'
-const META_ADS_MCP_RELAY = `${CREATIVE_API_BASE}/meta-ads-mcp`
-const DEMO_PUBLISH_LATENCY_MS = 900
-const DEFAULT_DAILY_BUDGET_MINOR = 10000
-const ADS_MCP_TAIWAN_FALLBACK_GEO = 'US'
 
 type ReviewResponse = {
   batchId: string
@@ -70,15 +54,7 @@ type FormatsResponse = {
     description: string
     destinationUrl: string
   }
-  assetDeliverables: Array<{
-    platform: string
-    surface: string
-    aspectRatio: string
-    url: string
-    width: number
-    height: number
-    mimeType: string
-  }>
+  assetDeliverables: AssetDeliverable[]
 }
 
 type RequestedCreativeFormat = {
@@ -89,69 +65,9 @@ type RequestedCreativeFormat = {
   height: number
 }
 
-type AdsMcpPublishResult = {
-  requestId: string
-  responseCode: number
-  responseBody: string
-  externalCampaignId: string
-  externalAdSetId: string
-  externalAdId: string
-}
-
-type FacebookCampaignSnapshot = {
-  id: string
-  name: string
-  status: string
-  effectiveStatus: string
-  objective: string
-}
-
-type FacebookAdSetSnapshot = {
-  id: string
-  campaignId: string
-  name: string
-  status: string
-  effectiveStatus: string
-  optimizationGoal: string
-  dailyBudget: string | null
-  lifetimeBudget: string | null
-}
-
-type FacebookAdSnapshot = {
-  id: string
-  campaignId: string
-  adSetId: string
-  name: string
-  status: string
-  effectiveStatus: string
-}
-
-type FacebookAccountStructureSnapshot = {
-  status: 'idle' | 'loading' | 'ready' | 'error'
-  campaigns: FacebookCampaignSnapshot[]
-  adSets: FacebookAdSetSnapshot[]
-  ads: FacebookAdSnapshot[]
-  lastSyncedAt: string | null
-  error: string | null
-}
-
-const rejectionReasons = [
-  '賣點不對',
-  '文案太弱',
-  '視覺不佳',
-  '不像 lihi',
-  '不適合投放',
-  '其他',
-]
-
 const platformOptions: Platform[] = ['Facebook', 'Instagram', 'Threads', 'Google Ads']
 
-const usd = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-})
+const rejectionReasons = ['賣點不對', '文案太弱', '視覺不佳', '不像 lihi', '不適合投放', '其他']
 
 const buildEmptyForm = () => ({
   kind: 'use_case' as LibraryKind,
@@ -171,129 +87,53 @@ const buildBatchForm = (library: StrategyRecord[]) => {
     productName: 'lihiSMS',
     benefitIds: benefits.slice(0, 3).map((item) => item.id),
     productLink: '',
-    logoAsset: '',
-    productAsset: '',
     additionalNotes: '',
   }
 }
 
-const toneLabelMap = {
-  brand: '品牌向',
-  conversion: '轉單向',
-} as const
-
-function formatStylePreset(stylePreset?: string) {
-  if (!stylePreset?.trim()) {
-    return '未指定風格'
-  }
-
-  return stylePreset
-    .split('_')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
-function formatTalentLabel(talent?: string, modelSetting?: string) {
-  if (modelSetting?.trim()) {
-    return modelSetting
-  }
-
-  return talent || '未提供'
+function waitAtLeast(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
-function getToneLabel(tone?: 'brand' | 'conversion') {
-  if (!tone) {
-    return '未指定方向'
-  }
+async function readErrorMessage(response: Response) {
+  const text = await response.text()
 
-  return toneLabelMap[tone]
-}
-
-function getPrimaryCopy(creative: CreativeAsset) {
-  return creative.copyDeliverables?.meta_ad ?? creative.finalCopy
-}
-
-function getDestinationUrl(creative: CreativeAsset) {
-  return (
-    creative.copyDeliverables?.meta_ad?.destinationUrl ||
-    creative.copyDeliverables?.google_ads?.destinationUrl ||
-    creative.finalCopy?.destinationUrl ||
-    creative.metadata.productLink ||
-    'https://lihi.io/products/sms'
-  )
-}
-
-function getPlatformLabel(platform: string) {
-  const normalized = platform.trim()
-  if (normalized === 'IG Reels' || normalized === 'IG Stories') {
-    return normalized
-  }
-  return normalized
-}
-
-function detectFunnelStage(creative: CreativeAsset): FunnelStage {
-  const useCaseId = creative.metadata.useCaseId
-
-  if (useCaseId.includes('member') || useCaseId.includes('winback')) {
-    return 'winback'
-  }
-
-  return 'prospecting'
-}
-
-function detectAudienceType(funnelStage: FunnelStage, creative: CreativeAsset): AudienceType {
-  if (funnelStage === 'winback') {
-    return 'old_leads'
-  }
-
-  if (creative.copyMode === '轉單') {
-    return 'interest_stack'
-  }
-
-  return 'broad'
-}
-
-function getAudienceWindowDays(audienceType: AudienceType) {
-  switch (audienceType) {
-    case 'site_visitors':
-      return 30
-    case 'engaged_clickers':
-    case 'lp_view_no_signup':
-      return 14
-    case 'old_leads':
-    case 'dormant_customers':
-      return 180
-    default:
-      return null
+  try {
+    const parsed = JSON.parse(text) as { error?: string; message?: string }
+    return parsed.error || parsed.message || text || `HTTP ${response.status}`
+  } catch {
+    return text || `HTTP ${response.status}`
   }
 }
 
-function getCampaignObjective(platforms: Platform[]): CampaignObjective {
-  return platforms.includes('Google Ads') ? 'leads' : 'conversions'
-}
-
-function getBudgetStrategy(funnelStage: FunnelStage): BudgetStrategy {
-  return funnelStage === 'prospecting' ? 'lowest_cost' : 'cost_cap'
-}
-
-function getOptimizationGoal(
-  funnelStage: FunnelStage,
-  objective: CampaignObjective,
-): OptimizationGoal {
-  if (objective === 'leads') {
-    return 'leads'
+function inferAspectRatio(width: number, height: number) {
+  if (!width || !height) {
+    return null
   }
 
-  return funnelStage === 'prospecting' ? 'landing_page_views' : 'conversions'
+  const ratio = width / height
+
+  if (Math.abs(ratio - 1) < 0.04) return '1:1'
+  if (Math.abs(ratio - 0.8) < 0.04) return '4:5'
+  if (Math.abs(ratio - 9 / 16) < 0.04) return '9:16'
+  if (Math.abs(ratio - 1.91) < 0.06) return '1.91:1'
+
+  return null
 }
 
-function getPlacementStrategy(platforms: Platform[]): PlacementStrategy {
-  if (platforms.includes('Instagram') || platforms.includes('Threads')) {
-    return 'stories_and_reels'
-  }
-
-  return 'advantage_plus'
+function normalizeReturnedAssets(assets: FormatsResponse['assetDeliverables']) {
+  return assets.map((asset) => ({
+    ...asset,
+    aspectRatio: inferAspectRatio(asset.width, asset.height) ?? asset.aspectRatio,
+  }))
 }
 
 function buildRequestedFormats(platforms: Platform[]): RequestedCreativeFormat[] {
@@ -367,1588 +207,84 @@ function buildRequestedFormats(platforms: Platform[]): RequestedCreativeFormat[]
   return requestedFormats
 }
 
-function inferAspectRatio(width: number, height: number) {
-  if (!width || !height) {
-    return null
+function getPrimaryCopy(creative: CreativeAsset) {
+  return creative.copyDeliverables?.meta_ad ?? creative.finalCopy
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat('zh-TW', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value))
+}
+
+function formatStylePreset(stylePreset?: string) {
+  if (!stylePreset?.trim()) {
+    return '未指定風格'
   }
 
-  const ratio = width / height
-
-  if (Math.abs(ratio - 1) < 0.04) {
-    return '1:1'
-  }
-  if (Math.abs(ratio - 0.8) < 0.04) {
-    return '4:5'
-  }
-  if (Math.abs(ratio - 9 / 16) < 0.04) {
-    return '9:16'
-  }
-  if (Math.abs(ratio - 16 / 9) < 0.06) {
-    return '16:9'
-  }
-  if (Math.abs(ratio - 1.91) < 0.06) {
-    return '1.91:1'
-  }
-
-  return null
+  return stylePreset
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
-function normalizeReturnedAssets(assets: FormatsResponse['assetDeliverables']) {
-  return assets.map((asset) => {
-    const inferredAspectRatio = inferAspectRatio(asset.width, asset.height)
-    return {
-      ...asset,
-      aspectRatio: inferredAspectRatio ?? asset.aspectRatio,
-    }
-  })
-}
-
-function getAngleFamily(creative: CreativeAsset): AdAngleFamily {
-  return creative.metadata.useCaseId.startsWith('use-') ? 'use_case' : 'benefit'
-}
-
-function buildCampaignName(productName: string, funnelStage: FunnelStage, objective: CampaignObjective) {
-  return `${productName} | ${capitalizeToken(funnelStage)} | ${capitalizeToken(objective)}`
-}
-
-function resolveFacebookCountryCode(value?: string | null) {
-  const normalized = (value ?? '').trim().toUpperCase()
-  return /^[A-Z]{2}$/.test(normalized) ? normalized : 'TW'
-}
-
-function buildAdSetName(
-  audienceType: AudienceType,
-  creative: CreativeAsset,
-  audienceWindowDays: number | null,
-) {
-  const productGeo = resolveFacebookCountryCode(creative.metadata.icp)
-  const audienceLabel = audienceTypeLabelMap[audienceType]
-  const windowLabel = audienceWindowDays ? ` | ${audienceWindowDays}D` : ''
-
-  if (audienceType === 'broad') {
-    return `P01 | ${audienceLabel} | ${productGeo} | 25-45`
-  }
-
-  return `A01 | ${audienceLabel}${windowLabel} | ${productGeo}`
-}
-
-function buildAdName(
-  creative: CreativeAsset,
-  angleFamily: AdAngleFamily,
-) {
-  const familyLabel = angleFamily === 'benefit' ? 'Benefit' : 'UseCase'
-  const copyModeLabel = creative.copyMode === '品牌' ? 'Brand' : 'Conversion'
-
-  return `A01 | ${familyLabel}_${creative.angleId} | ${copyModeLabel} | ${creative.creativeVersion}`
-}
-
-function capitalizeToken(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1)
-}
-
-const audienceTypeLabelMap: Record<AudienceType, string> = {
-  broad: 'Broad',
-  interest_stack: 'Interest',
-  lookalike: 'LAL',
-  site_visitors: 'Visitors',
-  engaged_clickers: 'EngagedClickers',
-  lp_view_no_signup: 'LPViewNoSignup',
-  old_leads: 'OldLeads',
-  dormant_customers: 'DormantCustomers',
-  crm_high_intent: 'CRMHighIntent',
-}
-
-function buildAdsPlan(creative: CreativeAsset): DraftAd['adsPlan'] {
-  const funnelStage = detectFunnelStage(creative)
-  const audienceType = detectAudienceType(funnelStage, creative)
-  const audienceWindowDays = getAudienceWindowDays(audienceType)
-  const objective = getCampaignObjective(creative.selectedPlatforms)
-  const budgetStrategy = getBudgetStrategy(funnelStage)
-  const optimizationGoal = getOptimizationGoal(funnelStage, objective)
-  const placementStrategy = getPlacementStrategy(creative.selectedPlatforms)
-  const angleFamily = getAngleFamily(creative)
-  const campaignName = buildCampaignName(creative.metadata.productName, funnelStage, objective)
-  const adsetName = buildAdSetName(audienceType, creative, audienceWindowDays)
-  const adName = buildAdName(creative, angleFamily)
-
+function buildArchiveRecord(creative: CreativeAsset): ApprovedArchiveItem {
   return {
-    campaign: {
-      objective,
-      funnelStage,
-      productLine: creative.metadata.productName,
-      market: creative.metadata.icp || 'TW',
-      campaignName,
-    },
-    adSet: {
-      audienceType,
-      audienceWindowDays,
-      geo: resolveFacebookCountryCode(creative.metadata.icp),
-      ageRange: '25-45',
-      budgetStrategy,
-      optimizationGoal,
-      placementStrategy,
-      adsetName,
-    },
-    ad: {
-      angleFamily,
-      angleLabel: creative.angleId,
-      copyMode: creative.copyMode,
-      adName,
-    },
-  }
-}
-
-function buildPublishChecklist(bundle: {
-  copyPayload: PublishBundle['copyPayload']
-  assetSelections: PublishAssetSelection[]
-}): PublishBundle['checklist'] {
-  const hasCopy =
-    Boolean(bundle.copyPayload.primaryText.trim()) && Boolean(bundle.copyPayload.headline.trim())
-  const hasDestinationUrl = Boolean(bundle.copyPayload.destinationUrl.trim())
-  const selectedAssets = bundle.assetSelections.filter((asset) => asset.selected)
-
-  return {
-    hasCopy,
-    hasDestinationUrl,
-    hasSelectedAssets: selectedAssets.length > 0,
-    hasMetaAsset: selectedAssets.some((asset) => isMetaPlatform(asset.platform)),
-  }
-}
-
-function buildSubmissionRecord(): PublishBundle['submission'] {
-  return {
-    mode: 'demo',
-    requestId: null,
-    submittedAt: null,
-    completedAt: null,
-    responseCode: null,
-    responseBody: null,
-    externalCampaignId: null,
-    externalAdSetId: null,
-    externalAdId: null,
-  }
-}
-
-function buildDefaultAdsMcpGateway(): AdsMcpGatewayConfig {
-  const configuredEndpointUrl = import.meta.env.VITE_ADS_MCP_GATEWAY_URL ?? ''
-  const endpointUrl = configuredEndpointUrl.trim() || META_ADS_MCP_RELAY
-  const appId = import.meta.env.VITE_FACEBOOK_APP_ID ?? ''
-  const graphVersion = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION ?? 'v26.0'
-
-  return {
-    mode: endpointUrl.trim() ? 'remote' : 'demo',
-    endpointUrl,
-    appId,
-    graphVersion,
-    adAccountId: '',
-    pixelId: '',
-    pageId: '',
-    authStrategy: endpointUrl.trim() ? 'bearer' : 'none',
-    accessToken: null,
-    tokenExpiresAt: null,
-    grantedScopes: [],
-    oauthState: null,
-    connectionStatus: 'disconnected',
-    businessName: null,
-    availableAdAccounts: [],
-    availablePixels: [],
-    availablePages: [],
-    lastError: null,
-    lastValidatedAt: null,
-  }
-}
-
-function buildFacebookRedirectUri() {
-  return `${window.location.origin}${window.location.pathname}`
-}
-
-function buildFacebookOauthUrl(gateway: AdsMcpGatewayConfig, oauthState: string) {
-  const params = new URLSearchParams({
-    client_id: gateway.appId,
-    redirect_uri: buildFacebookRedirectUri(),
-    response_type: 'token',
-    scope: 'ads_management,ads_read,business_management,ads_mcp_management,pages_show_list',
-    return_scopes: 'true',
-    auth_type: 'rerequest',
-    state: oauthState,
-  })
-
-  return `https://www.facebook.com/${gateway.graphVersion}/dialog/oauth?${params.toString()}`
-}
-
-function normalizeFacebookAdAccountId(id?: string | null, accountId?: string | null) {
-  const value = (accountId ?? id ?? '').trim()
-  if (!value) {
-    return ''
-  }
-
-  return value.startsWith('act_') ? value : `act_${value}`
-}
-
-function extractFacebookAdAccountNumber(id?: string | null, accountId?: string | null) {
-  const normalizedId = normalizeFacebookAdAccountId(id, accountId)
-  return normalizedId.replace(/^act_/, '')
-}
-
-function parseOauthHash(hash: string) {
-  const normalized = hash.startsWith('#') ? hash.slice(1) : hash
-  const params = new URLSearchParams(normalized)
-
-  return {
-    accessToken: params.get('access_token'),
-    expiresIn: params.get('expires_in'),
-    state: params.get('state'),
-    grantedScopes: params.get('granted_scopes'),
-    error: params.get('error') ?? params.get('error_reason'),
-    errorDescription: params.get('error_description'),
-  }
-}
-
-async function fetchFacebookAdAccounts(gateway: AdsMcpGatewayConfig) {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const accounts = new Map<string, { id: string; accountId: string; name: string; currency: string }>()
-  const upsertAccount = (account: {
-    id: string
-    accountId: string
-    name: string
-    currency: string
-  }) => {
-    const canonicalAccountId = extractFacebookAdAccountNumber(account.id, account.accountId)
-    const normalizedId = normalizeFacebookAdAccountId(account.id, account.accountId)
-    accounts.set(canonicalAccountId, {
-      id: normalizedId,
-      accountId: canonicalAccountId,
-      name: account.name,
-      currency: account.currency,
-    })
-  }
-  const params = new URLSearchParams({
-    fields: 'id,name,account_id,currency',
-    limit: '100',
-    access_token: gateway.accessToken,
-  })
-
-  const directAccounts = await fetchFacebookGraphCollection<{
-    id: string
-    name?: string
-    account_id?: string
-    currency?: string
-  }>(gateway, `/me/adaccounts?${params.toString()}`)
-
-  for (const account of directAccounts) {
-    upsertAccount({
-      id: account.id ?? '',
-      accountId: account.account_id ?? '',
-      name:
-        account.name ??
-        account.account_id ??
-        account.id ??
-        normalizeFacebookAdAccountId(account.id, account.account_id),
-      currency: account.currency ?? 'USD',
-    })
-  }
-
-  const businesses = await fetchFacebookBusinesses(gateway)
-
-  for (const business of businesses) {
-    const ownedAccounts = await fetchFacebookBusinessAdAccounts(gateway, business.id, 'owned')
-    for (const account of ownedAccounts) {
-      upsertAccount(account)
-    }
-
-    const clientAccounts = await fetchFacebookBusinessAdAccounts(gateway, business.id, 'client')
-    for (const account of clientAccounts) {
-      upsertAccount(account)
-    }
-  }
-
-  return Array.from(accounts.values()).map((account) => ({
-    id: account.id,
-    accountId: account.accountId,
-    name: account.name,
-    currency: account.currency,
-  })).sort((left, right) => {
-    const nameComparison = left.name.localeCompare(right.name, 'zh-Hant')
-    if (nameComparison !== 0) {
-      return nameComparison
-    }
-
-    return left.accountId.localeCompare(right.accountId)
-  })
-}
-
-async function fetchFacebookBusinesses(gateway: AdsMcpGatewayConfig) {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const params = new URLSearchParams({
-    fields: 'id,name',
-    limit: '100',
-    access_token: gateway.accessToken,
-  })
-
-  return fetchFacebookGraphCollection<{ id: string; name?: string }>(
-    gateway,
-    `/me/businesses?${params.toString()}`,
-  )
-}
-
-async function fetchFacebookBusinessAdAccounts(
-  gateway: AdsMcpGatewayConfig,
-  businessId: string,
-  relationship: 'owned' | 'client',
-) {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const edge = relationship === 'owned' ? 'owned_ad_accounts' : 'client_ad_accounts'
-  const params = new URLSearchParams({
-    fields: 'id,name,account_id,currency',
-    limit: '100',
-    access_token: gateway.accessToken,
-  })
-
-  const accounts = await fetchFacebookGraphCollection<{
-    id: string
-    name?: string
-    account_id?: string
-    currency?: string
-  }>(gateway, `/${businessId}/${edge}?${params.toString()}`)
-
-  return accounts.map((account) => ({
-    id: normalizeFacebookAdAccountId(account.id, account.account_id),
-    accountId: extractFacebookAdAccountNumber(account.id, account.account_id),
-    name: account.name ?? account.account_id ?? account.id ?? '',
-    currency: account.currency ?? 'USD',
-  }))
-}
-
-async function fetchFacebookGraphCollection<T>(
-  gateway: AdsMcpGatewayConfig,
-  initialPath: string,
-): Promise<T[]> {
-  const records: T[] = []
-  let nextUrl = `https://graph.facebook.com/${gateway.graphVersion}${initialPath}`
-
-  while (nextUrl) {
-    const response = await fetch(nextUrl)
-    const payload = (await response.json()) as {
-      data?: T[]
-      paging?: { next?: string }
-      error?: { message?: string }
-    }
-
-    if (!response.ok || payload.error) {
-      throw new Error(payload.error?.message ?? `Failed to fetch Facebook assets (${response.status})`)
-    }
-
-    records.push(...(payload.data ?? []))
-    nextUrl = payload.paging?.next ?? ''
-  }
-
-  return records
-}
-
-async function fetchFacebookPixels(gateway: AdsMcpGatewayConfig, adAccountId: string) {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const normalizedAdAccountId = normalizeFacebookAdAccountId(adAccountId)
-  const params = new URLSearchParams({
-    fields: 'id,name',
-    access_token: gateway.accessToken,
-  })
-  const response = await fetch(
-    `https://graph.facebook.com/${gateway.graphVersion}/${normalizedAdAccountId}/adspixels?${params.toString()}`,
-  )
-  const payload = (await response.json()) as {
-    data?: Array<{ id: string; name?: string }>
-    error?: { message?: string }
-  }
-
-  if (!response.ok || payload.error) {
-    throw new Error(payload.error?.message ?? `Failed to fetch pixels (${response.status})`)
-  }
-
-  return (payload.data ?? []).map((pixel) => ({
-    id: pixel.id,
-    name: pixel.name ?? pixel.id,
-  }))
-}
-
-async function fetchFacebookPages(gateway: AdsMcpGatewayConfig): Promise<AdsPageOption[]> {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const params = new URLSearchParams({
-    fields: 'id,name',
-    limit: '100',
-    access_token: gateway.accessToken,
-  })
-
-  const pages = await fetchFacebookGraphCollection<{ id: string; name?: string }>(
-    gateway,
-    `/me/accounts?${params.toString()}`,
-  )
-
-  return pages
-    .map((page) => ({
-      id: page.id,
-      name: page.name?.trim() || page.id,
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant'))
-}
-
-async function fetchFacebookAccountStructure(
-  gateway: AdsMcpGatewayConfig,
-  adAccountId: string,
-): Promise<{
-  campaigns: FacebookCampaignSnapshot[]
-  adSets: FacebookAdSetSnapshot[]
-  ads: FacebookAdSnapshot[]
-}> {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const normalizedAdAccountId = normalizeFacebookAdAccountId(adAccountId)
-  const buildCollectionPath = (edge: 'campaigns' | 'adsets' | 'ads', fields: string) => {
-    const params = new URLSearchParams({
-      fields,
-      limit: '200',
-      access_token: gateway.accessToken!,
-    })
-    return `/${normalizedAdAccountId}/${edge}?${params.toString()}`
-  }
-
-  const [campaigns, adSets, ads] = await Promise.all([
-    fetchFacebookGraphCollection<{
-      id: string
-      name?: string
-      objective?: string
-      status?: string
-      effective_status?: string
-    }>(
-      gateway,
-      buildCollectionPath('campaigns', 'id,name,objective,status,effective_status'),
-    ),
-    fetchFacebookGraphCollection<{
-      id: string
-      name?: string
-      campaign_id?: string
-      optimization_goal?: string
-      status?: string
-      effective_status?: string
-      daily_budget?: string
-      lifetime_budget?: string
-    }>(
-      gateway,
-      buildCollectionPath(
-        'adsets',
-        'id,name,campaign_id,optimization_goal,status,effective_status,daily_budget,lifetime_budget',
-      ),
-    ),
-    fetchFacebookGraphCollection<{
-      id: string
-      name?: string
-      campaign_id?: string
-      adset_id?: string
-      status?: string
-      effective_status?: string
-    }>(
-      gateway,
-      buildCollectionPath('ads', 'id,name,campaign_id,adset_id,status,effective_status'),
-    ),
-  ])
-
-  return {
-    campaigns: campaigns
-      .map((campaign) => ({
-        id: campaign.id,
-        name: campaign.name ?? campaign.id,
-        status: campaign.status ?? 'UNKNOWN',
-        effectiveStatus: campaign.effective_status ?? campaign.status ?? 'UNKNOWN',
-        objective: campaign.objective ?? 'UNKNOWN',
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant')),
-    adSets: adSets
-      .map((adSet) => ({
-        id: adSet.id,
-        campaignId: adSet.campaign_id ?? '',
-        name: adSet.name ?? adSet.id,
-        status: adSet.status ?? 'UNKNOWN',
-        effectiveStatus: adSet.effective_status ?? adSet.status ?? 'UNKNOWN',
-        optimizationGoal: adSet.optimization_goal ?? 'UNKNOWN',
-        dailyBudget: adSet.daily_budget ?? null,
-        lifetimeBudget: adSet.lifetime_budget ?? null,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant')),
-    ads: ads
-      .map((ad) => ({
-        id: ad.id,
-        campaignId: ad.campaign_id ?? '',
-        adSetId: ad.adset_id ?? '',
-        name: ad.name ?? ad.id,
-        status: ad.status ?? 'UNKNOWN',
-        effectiveStatus: ad.effective_status ?? ad.status ?? 'UNKNOWN',
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hant')),
-  }
-}
-
-function buildAdsMcpPayloadPreview(bundle: {
-  gateway: AdsMcpGatewayConfig
-  campaignPayload: PublishBundle['campaignPayload']
-  adSetPayload: PublishBundle['adSetPayload']
-  adPayload: PublishBundle['adPayload']
-  copyPayload: PublishBundle['copyPayload']
-  assetSelections: PublishAssetSelection[]
-  status: DraftAd['status']
-}): AdsMcpPayloadPreview {
-  const effectiveGeo = getAdsMcpPublishGeo(bundle.adSetPayload.geo)
-
-  return {
-    server: 'meta_ads_mcp',
-    version: 'draft_v1',
-    operation: 'ads_mcp_tool_sequence_preview',
-    connection: {
-      endpoint: bundle.gateway.endpointUrl.trim() || META_ADS_MCP_SERVER,
-      mode: bundle.gateway.mode,
-      adAccountId: bundle.gateway.adAccountId.trim(),
-      pixelId: bundle.gateway.pixelId.trim(),
-    },
-    campaign: {
-      name: bundle.campaignPayload.name,
-      objective: bundle.campaignPayload.objective,
-      buyingType: bundle.campaignPayload.buyingType,
-      status: 'paused',
-    },
-    adSet: {
-      name: bundle.adSetPayload.name,
-      optimizationGoal: bundle.adSetPayload.optimizationGoal,
-      budgetStrategy: bundle.adSetPayload.budgetStrategy,
-      placementStrategy: bundle.adSetPayload.placementStrategy,
-      audience: {
-        type: bundle.adSetPayload.audienceType,
-        geo: effectiveGeo,
-        ageRange: bundle.adSetPayload.ageRange,
-        windowDays: bundle.adSetPayload.audienceWindowDays,
-      },
-    },
-    creative: {
-      name: bundle.adPayload.name,
-      primaryText: bundle.copyPayload.primaryText,
-      headline: bundle.copyPayload.headline,
-      description: bundle.copyPayload.description,
-      destinationUrl: bundle.copyPayload.destinationUrl,
-      assetUrls: bundle.assetSelections.filter((asset) => asset.selected).map((asset) => asset.url),
-      selectedPlatforms: bundle.adPayload.selectedPlatforms,
-    },
-    ad: {
-      name: bundle.adPayload.name,
-      reviewState: bundle.status,
-    },
-  }
-}
-
-function buildPublishBundle(
-  creative: CreativeAsset,
-  adsPlan: DraftAd['adsPlan'],
-  gateway: AdsMcpGatewayConfig,
-): PublishBundle {
-  const copyPayload = {
-    primaryText: getPrimaryCopy(creative)?.primaryText ?? creative.body,
-    headline: getPrimaryCopy(creative)?.headline ?? creative.headline,
-    description:
-      getPrimaryCopy(creative)?.description ??
-      'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
-    destinationUrl: getDestinationUrl(creative),
-  }
-
-  const assetSelections: PublishAssetSelection[] =
-    creative.assetDeliverables.length > 0
-      ? creative.assetDeliverables.map((asset) => ({
-          platform: asset.platform,
-          surface: asset.surface,
-          aspectRatio: asset.aspectRatio,
-          url: asset.url,
-          width: asset.width,
-          height: asset.height,
-          mimeType: asset.mimeType,
-          label: `${asset.platform} · ${asset.surface} · ${asset.aspectRatio}`,
-          priority: isMetaPlatform(asset.platform) ? 'meta_primary' : 'secondary',
-          selected: isMetaPlatform(asset.platform),
-        }))
-      : creative.selectedPlatforms.map((platform) => ({
-          platform,
-          surface: 'returned by creative.bktsai.link',
-          aspectRatio: 'pending',
-          url: '',
-          width: null,
-          height: null,
-          mimeType: null,
-          label: `${platform} · pending asset`,
-          priority: isMetaPlatform(platform) ? 'meta_primary' : 'secondary',
-          selected: isMetaPlatform(platform),
-        }))
-
-  const campaignPayload = {
-    name: adsPlan.campaign.campaignName,
-    objective: adsPlan.campaign.objective,
-    funnelStage: adsPlan.campaign.funnelStage,
-    market: adsPlan.campaign.market,
-    buyingType: 'auction' as const,
-  }
-  const adSetPayload = {
-    name: adsPlan.adSet.adsetName,
-    audienceType: adsPlan.adSet.audienceType,
-    audienceWindowDays: adsPlan.adSet.audienceWindowDays,
-    budgetStrategy: adsPlan.adSet.budgetStrategy,
-    optimizationGoal: adsPlan.adSet.optimizationGoal,
-    placementStrategy: adsPlan.adSet.placementStrategy,
-    geo: adsPlan.adSet.geo,
-    ageRange: adsPlan.adSet.ageRange,
-  }
-  const adPayload = {
-    name: adsPlan.ad.adName,
-    angleFamily: adsPlan.ad.angleFamily,
-    angleLabel: adsPlan.ad.angleLabel,
-    copyMode: adsPlan.ad.copyMode,
+    id: creative.id,
+    creativeId: creative.sourceCreativeId,
+    batchId: creative.batchId,
+    creativeVersion: creative.creativeVersion,
+    angleId: creative.angleId,
+    approvedAt: new Date().toISOString(),
     selectedPlatforms: creative.selectedPlatforms,
+    productName: creative.metadata.productName,
+    useCaseId: creative.metadata.useCaseId,
+    benefitIds: creative.metadata.benefitIds,
+    promptVersion: creative.promptVersion,
+    copyMode: creative.copyMode,
+    headline: creative.headline,
+    kicker: creative.kicker,
+    body: creative.body,
+    squareAsset: creative.squareAsset,
+    finalCopy: creative.finalCopy,
+    copyDeliverables: creative.copyDeliverables,
+    assetDeliverables: creative.assetDeliverables,
+    metadata: creative.metadata,
   }
-  const checklist = buildPublishChecklist({ copyPayload, assetSelections })
+}
 
-  return {
-    campaignPayload,
-    adSetPayload,
-    adPayload,
-    copyPayload,
-    assetSelections,
-    adsMcpPayload: buildAdsMcpPayloadPreview({
-      gateway,
-      campaignPayload,
-      adSetPayload,
-      adPayload,
-      copyPayload,
-      assetSelections,
-      status: 'draft',
+async function requestFormatsForCreative(creative: CreativeAsset) {
+  const requestedFormats = buildRequestedFormats(creative.selectedPlatforms)
+  const response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      batchId: creative.batchId,
+      creativeId: creative.sourceCreativeId,
+      selectedPlatforms: creative.selectedPlatforms,
+      requestedFormats,
+      strictAspectRatios: true,
+      formatStrategy: 'low_risk_extend',
     }),
-    submission: {
-      ...buildSubmissionRecord(),
-      mode: gateway.mode,
-    },
-    checklist,
-    lastError: null,
-    preparedAt: null,
-  }
-}
-
-function buildLegacyDraftAdsPlan(
-  draft: Pick<DraftAd, 'campaignName' | 'adsetName' | 'adName' | 'metadata'>,
-): DraftAd['adsPlan'] {
-  const funnelStage: FunnelStage = draft.metadata.useCaseId.includes('member')
-    ? 'winback'
-    : 'prospecting'
-  const objective: CampaignObjective = 'conversions'
-  const audienceType: AudienceType = funnelStage === 'winback' ? 'old_leads' : 'broad'
-  const audienceWindowDays = getAudienceWindowDays(audienceType)
-
-  return {
-    campaign: {
-      objective,
-      funnelStage,
-      productLine: draft.metadata.productName,
-      market: draft.metadata.icp || 'TW',
-      campaignName: draft.campaignName,
-    },
-    adSet: {
-      audienceType,
-      audienceWindowDays,
-      geo: resolveFacebookCountryCode(draft.metadata.icp),
-      ageRange: '25-45',
-      budgetStrategy: getBudgetStrategy(funnelStage),
-      optimizationGoal: getOptimizationGoal(funnelStage, objective),
-      placementStrategy: 'advantage_plus',
-      adsetName: draft.adsetName,
-    },
-    ad: {
-      angleFamily: draft.metadata.useCaseId.startsWith('use-') ? 'use_case' : 'benefit',
-      angleLabel: draft.metadata.angleId,
-      copyMode:
-        draft.adName.includes('Brand') || draft.campaignName.includes('Brand')
-          ? '品牌'
-          : '轉單',
-      adName: draft.adName,
-    },
-  }
-}
-
-function migrateAppState(state: AppState) {
-  let changed = false
-  const defaultGateway = buildDefaultAdsMcpGateway()
-  const storedGateway = state.adsMcpGateway
-  const appId = storedGateway?.appId?.trim() ? storedGateway.appId : defaultGateway.appId
-  const graphVersion = storedGateway?.graphVersion?.trim()
-    ? storedGateway.graphVersion
-    : defaultGateway.graphVersion
-  const storedEndpointUrl = storedGateway?.endpointUrl?.trim() || ''
-  const shouldMigrateLegacyMetaEndpoint =
-    storedEndpointUrl === '' || storedEndpointUrl === META_ADS_MCP_SERVER
-  const adsMcpGateway = {
-    ...defaultGateway,
-    ...storedGateway,
-    appId,
-    graphVersion,
-    mode:
-      storedGateway?.mode === 'graph_api'
-        ? 'remote'
-        : storedGateway?.mode === 'demo' && !storedGateway?.endpointUrl?.trim()
-          ? defaultGateway.mode
-        : (storedGateway?.mode ?? defaultGateway.mode),
-    endpointUrl: shouldMigrateLegacyMetaEndpoint
-      ? defaultGateway.endpointUrl
-      : storedEndpointUrl,
-    accessToken: storedGateway?.accessToken ?? null,
-    tokenExpiresAt: storedGateway?.tokenExpiresAt ?? null,
-    grantedScopes: storedGateway?.grantedScopes ?? [],
-    oauthState: storedGateway?.oauthState ?? null,
-    connectionStatus: storedGateway?.connectionStatus ?? 'disconnected',
-    businessName: storedGateway?.businessName ?? null,
-    availableAdAccounts: storedGateway?.availableAdAccounts ?? [],
-    availablePixels: storedGateway?.availablePixels ?? [],
-    pageId: storedGateway?.pageId ?? '',
-    availablePages: storedGateway?.availablePages ?? [],
-    lastError: storedGateway?.lastError ?? null,
-  }
-
-  if (!storedGateway) {
-    changed = true
-  }
-
-  if (
-    !storedGateway?.connectionStatus ||
-    storedGateway?.accessToken === undefined ||
-    !storedGateway?.availableAdAccounts ||
-    !storedGateway?.availablePixels ||
-    storedGateway?.pageId === undefined ||
-    !storedGateway?.availablePages ||
-    storedGateway?.lastError === undefined ||
-    storedGateway?.appId !== appId ||
-    storedGateway?.graphVersion !== graphVersion ||
-    adsMcpGateway.mode !== storedGateway?.mode ||
-    adsMcpGateway.endpointUrl !== storedEndpointUrl
-  ) {
-    changed = true
-  }
-
-  const drafts = state.drafts.map((draft) => {
-    const nextDraft: DraftAd = { ...draft } as DraftAd
-
-    if (!nextDraft.adsPlan) {
-      changed = true
-      nextDraft.adsPlan = buildLegacyDraftAdsPlan(draft)
-    }
-
-    if (!nextDraft.publishBundle) {
-      changed = true
-      const assetSelections: PublishAssetSelection[] = nextDraft.assetDeliverables.map((asset) => ({
-        platform: asset.split(':')[0] ?? 'Facebook',
-        surface: asset.includes(':') ? asset.split(':').slice(1).join(':').trim() : asset,
-        aspectRatio: 'unknown',
-        url: '',
-        width: null,
-        height: null,
-        mimeType: null,
-        label: asset,
-        priority: asset.includes('Facebook') || asset.includes('Instagram') ? 'meta_primary' : 'secondary',
-        selected: asset.includes('Facebook') || asset.includes('Instagram'),
-      }))
-      const copyPayload = {
-        primaryText: nextDraft.primaryText,
-        headline: nextDraft.headline,
-        description: nextDraft.description,
-        destinationUrl: nextDraft.destinationUrl,
-      }
-      nextDraft.publishBundle = {
-        campaignPayload: {
-          name: nextDraft.campaignName,
-          objective: nextDraft.adsPlan.campaign.objective,
-          funnelStage: nextDraft.adsPlan.campaign.funnelStage,
-          market: nextDraft.metadata.icp || 'TW',
-          buyingType: 'auction',
-        },
-        adSetPayload: {
-          name: nextDraft.adsetName,
-          audienceType: nextDraft.adsPlan.adSet.audienceType,
-          audienceWindowDays: nextDraft.adsPlan.adSet.audienceWindowDays,
-          budgetStrategy: nextDraft.adsPlan.adSet.budgetStrategy,
-          optimizationGoal: nextDraft.adsPlan.adSet.optimizationGoal,
-          placementStrategy: nextDraft.adsPlan.adSet.placementStrategy,
-          geo: resolveFacebookCountryCode(nextDraft.metadata.icp),
-          ageRange: nextDraft.adsPlan.adSet.ageRange,
-        },
-        adPayload: {
-          name: nextDraft.adName,
-          angleFamily: nextDraft.adsPlan.ad.angleFamily,
-          angleLabel: nextDraft.adsPlan.ad.angleLabel,
-          copyMode: nextDraft.adsPlan.ad.copyMode,
-          selectedPlatforms: nextDraft.metadata.selectedPlatforms,
-        },
-        copyPayload,
-        assetSelections,
-        adsMcpPayload: buildAdsMcpPayloadPreview({
-          gateway: adsMcpGateway,
-          campaignPayload: {
-            name: nextDraft.campaignName,
-            objective: nextDraft.adsPlan.campaign.objective,
-            funnelStage: nextDraft.adsPlan.campaign.funnelStage,
-            market: nextDraft.metadata.icp || 'TW',
-            buyingType: 'auction',
-          },
-          adSetPayload: {
-            name: nextDraft.adsetName,
-            audienceType: nextDraft.adsPlan.adSet.audienceType,
-            audienceWindowDays: nextDraft.adsPlan.adSet.audienceWindowDays,
-            budgetStrategy: nextDraft.adsPlan.adSet.budgetStrategy,
-            optimizationGoal: nextDraft.adsPlan.adSet.optimizationGoal,
-            placementStrategy: nextDraft.adsPlan.adSet.placementStrategy,
-            geo: resolveFacebookCountryCode(nextDraft.metadata.icp),
-            ageRange: nextDraft.adsPlan.adSet.ageRange,
-          },
-          adPayload: {
-            name: nextDraft.adName,
-            angleFamily: nextDraft.adsPlan.ad.angleFamily,
-            angleLabel: nextDraft.adsPlan.ad.angleLabel,
-            copyMode: nextDraft.adsPlan.ad.copyMode,
-            selectedPlatforms: nextDraft.metadata.selectedPlatforms,
-          },
-          copyPayload,
-          assetSelections,
-          status: nextDraft.status,
-        }),
-        submission: {
-          ...buildSubmissionRecord(),
-          mode: adsMcpGateway.mode,
-        },
-        checklist: buildPublishChecklist({ copyPayload, assetSelections }),
-        lastError: null,
-        preparedAt: nextDraft.status === 'draft' ? null : nextDraft.createdAt,
-      }
-    }
-
-    if (!nextDraft.publishBundle.submission) {
-      changed = true
-      nextDraft.publishBundle = {
-        ...nextDraft.publishBundle,
-        submission: {
-          ...buildSubmissionRecord(),
-          mode: adsMcpGateway.mode,
-        },
-      }
-    }
-
-    if (
-      !nextDraft.publishBundle.adsMcpPayload.connection ||
-      !nextDraft.publishBundle.adsMcpPayload.operation
-    ) {
-      changed = true
-      nextDraft.publishBundle = {
-        ...nextDraft.publishBundle,
-        adsMcpPayload: buildAdsMcpPayloadPreview({
-          gateway: adsMcpGateway,
-          campaignPayload: nextDraft.publishBundle.campaignPayload,
-          adSetPayload: nextDraft.publishBundle.adSetPayload,
-          adPayload: nextDraft.publishBundle.adPayload,
-          copyPayload: nextDraft.publishBundle.copyPayload,
-          assetSelections: nextDraft.publishBundle.assetSelections,
-          status: nextDraft.status,
-        }),
-      }
-    }
-
-    if (nextDraft.adsPlan.adSet.geo !== resolveFacebookCountryCode(nextDraft.adsPlan.adSet.geo)) {
-      changed = true
-      nextDraft.adsPlan = {
-        ...nextDraft.adsPlan,
-        adSet: {
-          ...nextDraft.adsPlan.adSet,
-          geo: resolveFacebookCountryCode(nextDraft.adsPlan.adSet.geo),
-        },
-      }
-    }
-
-    if (
-      nextDraft.publishBundle.adSetPayload.geo !==
-      resolveFacebookCountryCode(nextDraft.publishBundle.adSetPayload.geo)
-    ) {
-      changed = true
-      nextDraft.publishBundle = {
-        ...nextDraft.publishBundle,
-        adSetPayload: {
-          ...nextDraft.publishBundle.adSetPayload,
-          geo: resolveFacebookCountryCode(nextDraft.publishBundle.adSetPayload.geo),
-        },
-      }
-    }
-
-    if (nextDraft.publishAttempts === undefined) {
-      changed = true
-      nextDraft.publishAttempts = nextDraft.status === 'published' ? 1 : 0
-    }
-
-    if (nextDraft.status === 'published' && !nextDraft.publishedAt) {
-      changed = true
-      nextDraft.publishedAt = nextDraft.createdAt
-    }
-
-    return nextDraft
   })
 
-  if (!changed) {
-    return state
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response))
   }
 
-  return {
-    ...state,
-    adsMcpGateway,
-    drafts,
-  }
-}
-
-function parseAgeRange(ageRange: string) {
-  const [min, max] = ageRange.split('-').map((part) => Number.parseInt(part.trim(), 10))
-  return {
-    ageMin: Number.isFinite(min) ? min : 25,
-    ageMax: Number.isFinite(max) ? max : 45,
-  }
-}
-
-function getCountryCode(geo: string) {
-  return resolveFacebookCountryCode(geo)
-}
-
-function requiresTaiwanRegionalRegulation(geo: string) {
-  return getCountryCode(geo) === 'TW'
-}
-
-function getAdsMcpPublishGeo(geo: string) {
-  return requiresTaiwanRegionalRegulation(geo) ? ADS_MCP_TAIWAN_FALLBACK_GEO : geo
-}
-
-type McpJsonRpcError = {
-  code: number
-  message: string
-  data?: unknown
-}
-
-type McpJsonRpcResponse<T> = {
-  id?: string | number | null
-  jsonrpc?: string
-  result?: T
-  error?: McpJsonRpcError
-}
-
-type MetaErrorPayload = {
-  title?: string
-  detail?: string
-  status?: number
-}
-
-type ServerSentEventBlock = {
-  event?: string
-  data: string[]
-}
-
-type McpToolDefinition = {
-  name: string
-  description?: string
-  inputSchema?: {
-    type?: string
-    required?: string[]
-    properties?: Record<string, unknown>
-  }
-}
-
-type McpToolCallResult = {
-  content?: Array<{ type?: string; text?: string }>
-  structuredContent?: Record<string, unknown>
-  isError?: boolean
-}
-
-function getAdsMcpEndpoint(gateway: AdsMcpGatewayConfig) {
-  return gateway.endpointUrl.trim() || META_ADS_MCP_SERVER
-}
-
-function buildAdsMcpHeaders(
-  gateway: AdsMcpGatewayConfig,
-  sessionId?: string | null,
-) {
-  return {
-    Accept: 'application/json, text/event-stream',
-    'Content-Type': 'application/json',
-    ...(gateway.accessToken ? { Authorization: `Bearer ${gateway.accessToken}` } : {}),
-    ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
-  }
-}
-
-function hasGrantedScope(grantedScopes: string[], scope: string) {
-  return grantedScopes.some((item) => item.trim() === scope)
-}
-
-async function postAdsMcpRpc<T>(
-  gateway: AdsMcpGatewayConfig,
-  body: Record<string, unknown>,
-  sessionId?: string | null,
-  options?: { allowEmptyResponse?: boolean },
-): Promise<{ response: McpJsonRpcResponse<T>; sessionId: string | null }> {
-  let httpResponse: Response
-  try {
-    httpResponse = await fetch(getAdsMcpEndpoint(gateway), {
-      method: 'POST',
-      headers: buildAdsMcpHeaders(gateway, sessionId),
-      body: JSON.stringify(body),
-    })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(
-      `Ads MCP relay 無法連線：${message}. 請確認目前 endpoint 是可跨網域的 relay，而不是瀏覽器直連 Meta MCP。`,
-    )
-  }
-  const text = await httpResponse.text()
-  const parsed = parseMcpJsonRpcResponse<T>(text)
-  const metaError = safeJsonParse<MetaErrorPayload>(text)
-
-  if (!httpResponse.ok) {
-    if (
-      httpResponse.status === 403 &&
-      (metaError?.title === 'Unauthorized Access' || metaError?.detail === 'Unauthorized Access')
-    ) {
-      throw new Error(
-        'Meta Ads MCP 拒絕授權。這通常代表目前 access token 沒有真的取得 `ads_mcp_management`，或這個 Meta app / 使用者尚未被允許使用 Ads MCP。',
-      )
-    }
-
-    throw new Error(
-      metaError?.detail || metaError?.title || text || `Ads MCP request failed with ${httpResponse.status}`,
-    )
-  }
-
-  if (!text.trim() && (options?.allowEmptyResponse || httpResponse.status === 202 || httpResponse.status === 204)) {
-    return {
-      response: {},
-      sessionId: httpResponse.headers.get('mcp-session-id'),
-    }
-  }
-
-  if (!parsed) {
-    throw new Error(`Ads MCP returned a non-JSON response. Preview: ${buildResponsePreview(text)}`)
-  }
-
-  if (parsed.error) {
-    throw new Error(parsed.error.message || 'Ads MCP returned an error.')
-  }
-
-  return {
-    response: parsed,
-    sessionId: httpResponse.headers.get('mcp-session-id'),
-  }
-}
-
-async function initializeAdsMcpSession(gateway: AdsMcpGatewayConfig) {
-  if (!gateway.accessToken) {
-    throw new Error('Missing Facebook access token.')
-  }
-
-  const initialize = await postAdsMcpRpc<{ protocolVersion?: string }>(gateway, {
-    jsonrpc: '2.0',
-    id: 'initialize',
-    method: 'initialize',
-    params: {
-      protocolVersion: '2025-11-25',
-      capabilities: {},
-      clientInfo: {
-        name: 'lihisms-growth-console',
-        version: '1.0.0',
-      },
-    },
-  })
-
-  await postAdsMcpRpc(
-    gateway,
-    {
-      jsonrpc: '2.0',
-      method: 'notifications/initialized',
-      params: {},
-    },
-    initialize.sessionId,
-    { allowEmptyResponse: true },
-  )
-
-  const toolsList = await postAdsMcpRpc<{ tools?: McpToolDefinition[] }>(
-    gateway,
-    {
-      jsonrpc: '2.0',
-      id: 'tools-list',
-      method: 'tools/list',
-      params: {},
-    },
-    initialize.sessionId,
-  )
-
-  return {
-    sessionId: toolsList.sessionId ?? initialize.sessionId,
-    tools: toolsList.response.result?.tools ?? [],
-  }
-}
-
-async function callAdsMcpTool(
-  gateway: AdsMcpGatewayConfig,
-  sessionId: string | null,
-  name: string,
-  args: Record<string, unknown>,
-) {
-  const result = await postAdsMcpRpc<McpToolCallResult>(
-    gateway,
-    {
-      jsonrpc: '2.0',
-      id: `tool-${name}`,
-      method: 'tools/call',
-      params: {
-        name,
-        arguments: args,
-      },
-    },
-    sessionId,
-  )
-
-  return result.response.result ?? {}
-}
-
-function mapObjectiveToAdsMcpObjective(objective: CampaignObjective) {
-  return objective === 'leads' ? 'OUTCOME_LEADS' : 'OUTCOME_SALES'
-}
-
-function mapOptimizationGoalToAdsMcpOptimizationGoal(goal: OptimizationGoal) {
-  switch (goal) {
-    case 'leads':
-      return 'LEAD_GENERATION'
-    case 'conversions':
-      return 'OFFSITE_CONVERSIONS'
-    default:
-      return 'LANDING_PAGE_VIEWS'
-  }
-}
-
-function shapeValueForSchema(value: unknown, schema: unknown): unknown {
-  if (!schema || value === undefined) {
-    return value
-  }
-
-  const typedSchema = schema as {
-    type?: string
-    properties?: Record<string, unknown>
-    items?: unknown
-  }
-
-  if (typedSchema.type === 'object' && typedSchema.properties && value && typeof value === 'object') {
-    const shaped: Record<string, unknown> = {}
-    for (const [key, propertySchema] of Object.entries(typedSchema.properties)) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
-        const nextValue = shapeValueForSchema(
-          (value as Record<string, unknown>)[key],
-          propertySchema,
-        )
-        if (nextValue !== undefined) {
-          shaped[key] = nextValue
-        }
-      }
-    }
-    return shaped
-  }
-
-  if (typedSchema.type === 'array' && Array.isArray(value)) {
-    return value.map((item) => shapeValueForSchema(item, typedSchema.items))
-  }
-
-  if (
-    typedSchema.type === 'string' &&
-    value !== null &&
-    (Array.isArray(value) || typeof value === 'object')
-  ) {
-    return JSON.stringify(value)
-  }
-
-  return value
-}
-
-function buildArgsFromSchema(
-  tool: McpToolDefinition | undefined,
-  candidates: Record<string, unknown>,
-) {
-  if (!tool?.inputSchema?.properties) {
-    return candidates
-  }
-
-  const args: Record<string, unknown> = {}
-  const missing: string[] = []
-
-  for (const [propertyName, propertySchema] of Object.entries(tool.inputSchema.properties)) {
-    if (Object.prototype.hasOwnProperty.call(candidates, propertyName)) {
-      const nextValue = shapeValueForSchema(candidates[propertyName], propertySchema)
-      if (nextValue !== undefined) {
-        args[propertyName] = nextValue
-      }
-    }
-  }
-
-  for (const requiredName of tool.inputSchema.required ?? []) {
-    if (args[requiredName] === undefined) {
-      missing.push(requiredName)
-    }
-  }
-
-  if (missing.length > 0) {
-    throw new Error(
-      `${tool.name} 缺少必要欄位：${missing.join(', ')}。Schema keys: ${Object.keys(
-        tool.inputSchema.properties,
-      ).join(', ')}`,
-    )
-  }
-
-  return args
-}
-
-function buildAdsMcpPlacements(placementStrategy: PlacementStrategy) {
-  if (placementStrategy === 'stories_and_reels') {
-    return {
-      publisher_platforms: ['facebook', 'instagram'],
-      facebook_positions: ['story', 'facebook_reels'],
-      instagram_positions: ['story', 'reels'],
-    }
-  }
-
-  return {
-    publisher_platforms: ['facebook', 'instagram'],
-    facebook_positions: ['feed'],
-    instagram_positions: ['stream'],
-  }
-}
-
-function extractMcpStructuredData(result: McpToolCallResult) {
-  if (result.structuredContent && typeof result.structuredContent === 'object') {
-    return result.structuredContent
-  }
-
-  const textBlock = result.content?.find((item) => item.text?.trim())
-  if (!textBlock?.text) {
-    return null
-  }
-
-  return safeJsonParse<Record<string, unknown>>(textBlock.text) ?? { text: textBlock.text }
-}
-
-function extractEntityId(
-  data: Record<string, unknown> | null,
-  keys: string[],
-) {
-  if (!data) {
-    return null
-  }
-
-  for (const key of keys) {
-    const value = data[key]
-    if (typeof value === 'string' && value.trim()) {
-      return value
-    }
-  }
-
-  return null
-}
-
-function requireMetaEntityId(
-  value: string | null,
-  entityLabel: 'campaign' | 'ad set' | 'ad',
-  toolName: string,
-  toolResult: McpToolCallResult,
-) {
-  if (value && !/^(cmp_|adset_|ad_)/.test(value)) {
-    return value
-  }
-
-  throw new Error(
-    `Meta Ads MCP 沒有回傳真實 ${entityLabel} id，${toolName} 可能沒有真的建立成功。Result: ${buildResponsePreview(
-      JSON.stringify(toolResult),
-    )}`,
-  )
-}
-
-function buildFacebookTargeting(bundle: PublishBundle) {
-  const { ageMin, ageMax } = parseAgeRange(bundle.adSetPayload.ageRange)
-  const targeting: Record<string, unknown> = {
-    geo_locations: {
-      countries: [getCountryCode(bundle.adSetPayload.geo)],
-    },
-    age_min: ageMin,
-    age_max: ageMax,
-    publisher_platforms: ['facebook'],
-    facebook_positions:
-      bundle.adSetPayload.placementStrategy === 'stories_and_reels'
-        ? ['story', 'facebook_reels']
-        : ['feed'],
-    device_platforms: ['mobile', 'desktop'],
-  }
-
-  return targeting
-}
-
-async function executeAdsMcpPublish(
-  gateway: AdsMcpGatewayConfig,
-  payload: AdsMcpPayloadPreview,
-): Promise<AdsMcpPublishResult> {
-  const requestId = `req_${Math.random().toString(36).slice(2, 10)}`
-  const externalCampaignId = `cmp_${Math.abs(stringScore(payload.campaign.name)).toString(36)}`
-  const externalAdSetId = `adset_${Math.abs(stringScore(payload.adSet.name)).toString(36)}`
-  const externalAdId = `ad_${Math.abs(stringScore(payload.ad.name)).toString(36)}`
-
-  if (gateway.mode === 'demo') {
-    await waitAtLeast(DEMO_PUBLISH_LATENCY_MS)
-
-    return {
-      requestId,
-      responseCode: 200,
-      responseBody: JSON.stringify(
-        {
-          ok: true,
-          mode: 'demo',
-          endpoint: payload.connection.endpoint,
-          ids: {
-            campaignId: externalCampaignId,
-            adSetId: externalAdSetId,
-            adId: externalAdId,
-          },
-        },
-        null,
-        2,
-      ),
-      externalCampaignId,
-      externalAdSetId,
-      externalAdId,
-    }
-  }
-
-  const { sessionId, tools } = await initializeAdsMcpSession(gateway)
-  const campaignTool = tools.find((tool) => tool.name === 'ads_create_campaign')
-  const adSetTool = tools.find((tool) => tool.name === 'ads_create_ad_set')
-  const adTool = tools.find((tool) => tool.name === 'ads_create_ad')
-
-  if (!campaignTool || !adSetTool || !adTool) {
-    throw new Error(
-      `Ads MCP 缺少必要工具。找到: ${tools.map((tool) => tool.name).join(', ') || 'none'}`,
-    )
-  }
-
-  const selectedImageUrl = payload.creative.assetUrls[0]
-
-  if (!selectedImageUrl) {
-    throw new Error('這份 draft 還沒有可投放的 Meta 素材 URL。')
-  }
-
-  const campaignArgs = buildArgsFromSchema(campaignTool, {
-    ad_account_id: gateway.adAccountId,
-    account_id: gateway.adAccountId,
-    campaign_name: payload.campaign.name,
-    name: payload.campaign.name,
-    objective: mapObjectiveToAdsMcpObjective(payload.campaign.objective),
-    special_ad_category: 'NONE',
-    special_ad_categories: '[]',
-    status: 'PAUSED',
-    buying_type: 'AUCTION',
-  })
-  const campaignResult = await callAdsMcpTool(
-    gateway,
-    sessionId,
-    campaignTool.name,
-    campaignArgs,
-  )
-  const campaignData = extractMcpStructuredData(campaignResult)
-  const campaignId = requireMetaEntityId(
-    extractEntityId(campaignData, ['campaign_id', 'id', 'entity_id']) ?? externalCampaignId,
-    'campaign',
-    campaignTool.name,
-    campaignResult,
-  )
-  const publishGeo = getAdsMcpPublishGeo(payload.adSet.audience.geo)
-
-  const adSetArgs = buildArgsFromSchema(adSetTool, {
-    ad_account_id: gateway.adAccountId,
-    account_id: gateway.adAccountId,
-    campaign_id: campaignId,
-    ad_set_name: payload.adSet.name,
-    name: payload.adSet.name,
-    status: 'PAUSED',
-    daily_budget: DEFAULT_DAILY_BUDGET_MINOR,
-    billing_event: 'IMPRESSIONS',
-    optimization_goal: mapOptimizationGoalToAdsMcpOptimizationGoal(payload.adSet.optimizationGoal),
-    destination_type: 'WEBSITE',
-    page_id: gateway.pageId,
-    pixel_id: gateway.pixelId,
-    promoted_object: {
-      pixel_id: gateway.pixelId,
-      custom_event_type:
-        payload.campaign.objective === 'leads' ? 'LEAD' : 'COMPLETE_REGISTRATION',
-    },
-    targeting: {
-      ...buildFacebookTargeting({
-        campaignPayload: {
-          name: payload.campaign.name,
-          objective: payload.campaign.objective,
-          funnelStage: 'prospecting',
-          market: publishGeo,
-          buyingType: 'auction',
-        },
-        adSetPayload: {
-          name: payload.adSet.name,
-          audienceType: payload.adSet.audience.type,
-          audienceWindowDays: payload.adSet.audience.windowDays,
-          budgetStrategy: payload.adSet.budgetStrategy,
-          optimizationGoal: payload.adSet.optimizationGoal,
-          placementStrategy: payload.adSet.placementStrategy,
-          geo: publishGeo,
-          ageRange: payload.adSet.audience.ageRange,
-        },
-        adPayload: {
-          name: payload.ad.name,
-          angleFamily: 'benefit',
-          angleLabel: payload.ad.name,
-          copyMode: '品牌',
-          selectedPlatforms: payload.creative.selectedPlatforms,
-        },
-        copyPayload: {
-          primaryText: payload.creative.primaryText,
-          headline: payload.creative.headline,
-          description: payload.creative.description,
-          destinationUrl: payload.creative.destinationUrl,
-        },
-        assetSelections: [],
-        adsMcpPayload: payload,
-        submission: buildSubmissionRecord(),
-        checklist: {
-          hasCopy: true,
-          hasDestinationUrl: true,
-          hasSelectedAssets: true,
-          hasMetaAsset: true,
-        },
-        lastError: null,
-        preparedAt: null,
-      }),
-      ...buildAdsMcpPlacements(payload.adSet.placementStrategy),
-    },
-    selected_platforms: payload.creative.selectedPlatforms,
-    destination_url: payload.creative.destinationUrl,
-  })
-  const adSetResult = await callAdsMcpTool(gateway, sessionId, adSetTool.name, adSetArgs)
-  const adSetData = extractMcpStructuredData(adSetResult)
-  const createdAdSetId = requireMetaEntityId(
-    extractEntityId(adSetData, ['ad_set_id', 'adset_id', 'id', 'entity_id']) ?? externalAdSetId,
-    'ad set',
-    adSetTool.name,
-    adSetResult,
-  )
-
-  const objectStorySpec = {
-    page_id: gateway.pageId,
-    link_data: {
-      message: payload.creative.primaryText,
-      name: payload.creative.headline,
-      description: payload.creative.description,
-      link: payload.creative.destinationUrl,
-      image_url: selectedImageUrl,
-      call_to_action: {
-        type: 'LEARN_MORE',
-        value: {
-          link: payload.creative.destinationUrl,
-        },
-      },
-    },
-  }
-  const creativeSource = {
-    name: `${payload.ad.name} Creative`,
-    object_story_spec: objectStorySpec,
-  }
-
-  const adArgs = buildArgsFromSchema(adTool, {
-    ad_account_id: gateway.adAccountId,
-    account_id: gateway.adAccountId,
-    ad_set_id: createdAdSetId,
-    adset_id: createdAdSetId,
-    page_id: gateway.pageId,
-    ad_name: payload.ad.name,
-    name: payload.ad.name,
-    status: 'PAUSED',
-    destination_url: payload.creative.destinationUrl,
-    image_url: selectedImageUrl,
-    primary_text: payload.creative.primaryText,
-    headline: payload.creative.headline,
-    description: payload.creative.description,
-    creative: creativeSource,
-    creative_spec: creativeSource,
-    object_story_spec: objectStorySpec,
-  })
-  const adResult = await callAdsMcpTool(gateway, sessionId, adTool.name, adArgs)
-  const adData = extractMcpStructuredData(adResult)
-  const createdAdId = requireMetaEntityId(
-    extractEntityId(adData, ['ad_id', 'id', 'entity_id']) ?? externalAdId,
-    'ad',
-    adTool.name,
-    adResult,
-  )
-
-  return {
-    requestId,
-    responseCode: 200,
-    responseBody: JSON.stringify(
-      {
-        ok: true,
-        mode: 'remote',
-        endpoint: getAdsMcpEndpoint(gateway),
-        tools: {
-          campaign: campaignTool.name,
-          adSet: adSetTool.name,
-          ad: adTool.name,
-        },
-        args: {
-          campaign: campaignArgs,
-          adSet: adSetArgs,
-          ad: adArgs,
-        },
-        result: {
-          campaign: campaignData,
-          adSet: adSetData,
-          ad: adData,
-        },
-      },
-      null,
-      2,
-    ),
-    externalCampaignId: campaignId,
-    externalAdSetId: createdAdSetId,
-    externalAdId: createdAdId,
-  }
+  return (await response.json()) as FormatsResponse
 }
 
 function App() {
   const logoUrl = `${import.meta.env.BASE_URL}lihi-logo-primary.png`
-  const [persistedState, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
-  const state = useMemo(() => migrateAppState(persistedState), [persistedState])
-  const reviewSectionRef = useRef<HTMLElement | null>(null)
-  const structureSectionRef = useRef<HTMLDivElement | null>(null)
+  const [state, setState] = usePersistentState<AppState>(STORAGE_KEY, initialState)
+  const [archive, setArchive] = useState<ApprovedArchiveItem[]>([])
+  const [archiveStatus, setArchiveStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [archiveError, setArchiveError] = useState<string | null>(null)
   const [selectedKind, setSelectedKind] = useState<LibraryKind>('use_case')
   const [form, setForm] = useState(buildEmptyForm)
   const [batchForm, setBatchForm] = useState(() => buildBatchForm(initialState.library))
@@ -1956,547 +292,122 @@ function App() {
   const [productImageFile, setProductImageFile] = useState<File | null>(null)
   const [requestError, setRequestError] = useState<string | null>(null)
   const [batchStatusMessage, setBatchStatusMessage] = useState<string | null>(null)
+  const [archiveMessage, setArchiveMessage] = useState<string | null>(null)
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false)
   const [approvingCreativeId, setApprovingCreativeId] = useState<string | null>(null)
   const [isApprovingBatch, setIsApprovingBatch] = useState(false)
-  const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null)
-  const [publishStatusMessage, setPublishStatusMessage] = useState<string | null>(null)
-  const [isConnectingFacebook, setIsConnectingFacebook] = useState(false)
-  const [adAccountQuery, setAdAccountQuery] = useState('')
-  const [accountStructureSnapshot, setAccountStructureSnapshot] =
-    useState<FacebookAccountStructureSnapshot>({
-      status: 'idle',
-      campaigns: [],
-      adSets: [],
-      ads: [],
-      lastSyncedAt: null,
-      error: null,
-    })
-  const [selectedCampaignId, setSelectedCampaignId] = useState('')
-  const [selectedAdSetId, setSelectedAdSetId] = useState('')
-  const [selectedAdId, setSelectedAdId] = useState('')
-  const [structureRefreshKey, setStructureRefreshKey] = useState(0)
+  const [searchQuery, setSearchQuery] = useState('')
 
-  const jumpToStructureSection = () => {
-    structureSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-
-  useEffect(() => {
-    if (state !== persistedState) {
-      setState(state)
-    }
-  }, [persistedState, setState, state])
-
-  useEffect(() => {
-    if (accountStructureSnapshot.status !== 'ready') {
-      return
-    }
-
-    jumpToStructureSection()
-  }, [accountStructureSnapshot.status])
-
-  useEffect(() => {
-    const oauthResult = parseOauthHash(window.location.hash)
-    if (
-      !oauthResult.accessToken &&
-      !oauthResult.error &&
-      !oauthResult.grantedScopes &&
-      !oauthResult.expiresIn
-    ) {
-      return
-    }
-
-    window.history.replaceState({}, document.title, window.location.pathname + window.location.search)
-
-    if (oauthResult.error) {
-      setState((current) => ({
-        ...current,
-        adsMcpGateway: {
-          ...current.adsMcpGateway,
-          connectionStatus: 'error',
-          lastError: oauthResult.errorDescription || oauthResult.error,
-          accessToken: null,
-        },
-      }))
-      setPublishStatusMessage(`Facebook OAuth 失敗：${oauthResult.errorDescription || oauthResult.error}`)
-      return
-    }
-
-    if (
-      state.adsMcpGateway.oauthState &&
-      oauthResult.state &&
-      state.adsMcpGateway.oauthState !== oauthResult.state
-    ) {
-      setState((current) => ({
-        ...current,
-        adsMcpGateway: {
-          ...current.adsMcpGateway,
-          connectionStatus: 'error',
-          lastError: 'OAuth state mismatch.',
-          accessToken: null,
-        },
-      }))
-      setPublishStatusMessage('Facebook OAuth 驗證失敗，state mismatch。')
-      return
-    }
-
-    if (!oauthResult.accessToken) {
-      return
-    }
-
-    const expiresInSeconds = Number(oauthResult.expiresIn ?? '0')
-    const tokenExpiresAt =
-      expiresInSeconds > 0 ? new Date(Date.now() + expiresInSeconds * 1000).toISOString() : null
-    const grantedScopes = oauthResult.grantedScopes
-      ? oauthResult.grantedScopes
-          .split(',')
-          .map((scope) => scope.trim())
-          .filter(Boolean)
-      : []
-
-    setState((current) => ({
-      ...current,
-      adsMcpGateway: {
-        ...current.adsMcpGateway,
-        accessToken: oauthResult.accessToken,
-        tokenExpiresAt,
-        grantedScopes,
-        connectionStatus: 'fetching_assets',
-        lastError: null,
-      },
-    }))
-    setPublishStatusMessage('Facebook OAuth 成功，正在抓取 ad accounts / pages...')
-  }, [setState, state.adsMcpGateway.oauthState])
-
-  useEffect(() => {
-    if (
-      state.adsMcpGateway.connectionStatus !== 'fetching_assets' ||
-      !state.adsMcpGateway.accessToken
-    ) {
-      return
-    }
-
-    let cancelled = false
-
-    const run = async () => {
-      try {
-        let pageFetchError: string | null = null
-        const [availableAdAccounts, availablePages] = await Promise.all([
-          fetchFacebookAdAccounts(state.adsMcpGateway),
-          fetchFacebookPages(state.adsMcpGateway).catch((error) => {
-            pageFetchError =
-              error instanceof Error ? error.message : 'Failed to fetch Facebook pages.'
-            return []
-          }),
-        ])
-        if (cancelled) {
-          return
-        }
-
-        const nextAdAccountId =
-          state.adsMcpGateway.adAccountId || availableAdAccounts[0]?.id || ''
-        const nextPageId = state.adsMcpGateway.pageId || availablePages[0]?.id || ''
-
-        setState((current) => ({
-          ...current,
-          adsMcpGateway: {
-            ...current.adsMcpGateway,
-            connectionStatus: 'connected',
-            businessName: 'Facebook Ads OAuth',
-            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'demo',
-            availableAdAccounts,
-            availablePixels: current.adsMcpGateway.availablePixels,
-            availablePages,
-            adAccountId: nextAdAccountId,
-            pixelId: current.adsMcpGateway.pixelId,
-            pageId: nextPageId,
-            lastError: pageFetchError,
-          },
-        }))
-
-        let availablePixels: AdsMcpGatewayConfig['availablePixels'] = []
-        let pixelFetchError: string | null = null
-
-        if (nextAdAccountId) {
-          try {
-            availablePixels = await fetchFacebookPixels(state.adsMcpGateway, nextAdAccountId)
-          } catch (error) {
-            pixelFetchError =
-              error instanceof Error ? error.message : 'Failed to fetch Facebook pixels.'
-          }
-        }
-
-        if (cancelled) {
-          return
-        }
-
-        setState((current) => ({
-          ...current,
-          adsMcpGateway: {
-            ...current.adsMcpGateway,
-            connectionStatus: 'connected',
-            businessName: 'Facebook Ads OAuth',
-            mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'demo',
-            availableAdAccounts,
-            availablePixels:
-              availablePixels.length > 0 ? availablePixels : current.adsMcpGateway.availablePixels,
-            availablePages,
-            adAccountId: nextAdAccountId,
-            pixelId:
-              current.adsMcpGateway.pixelId ||
-              availablePixels[0]?.id ||
-              current.adsMcpGateway.availablePixels[0]?.id ||
-              '',
-            pageId: current.adsMcpGateway.pageId || availablePages[0]?.id || '',
-            lastError: pixelFetchError ?? pageFetchError,
-          },
-        }))
-        setPublishStatusMessage(
-          pixelFetchError || pageFetchError
-            ? `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account / ${availablePixels.length} 個 pixel / ${availablePages.length} 個 pages，但還有錯誤：${
-                pixelFetchError ?? pageFetchError
-              }`
-            : `Facebook 已連線，已抓回 ${availableAdAccounts.length} 個 ad account / ${availablePixels.length} 個 pixel / ${availablePages.length} 個 pages。`,
-        )
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        const message = error instanceof Error ? error.message : 'Failed to fetch Facebook assets.'
-        setState((current) => ({
-          ...current,
-          adsMcpGateway: {
-            ...current.adsMcpGateway,
-            connectionStatus: 'error',
-            lastError: message,
-            availableAdAccounts: [],
-            availablePixels: [],
-            availablePages: [],
-            adAccountId: '',
-            pixelId: '',
-            pageId: '',
-          },
-        }))
-        setPublishStatusMessage(`Facebook account fetch 失敗：${message}`)
-      } finally {
-        if (!cancelled) {
-          setIsConnectingFacebook(false)
-        }
-      }
-    }
-
-    void run()
-
-    return () => {
-      cancelled = true
-    }
-  }, [setState, state.adsMcpGateway])
-
-  useEffect(() => {
-    if (
-      state.adsMcpGateway.connectionStatus !== 'connected' ||
-      !state.adsMcpGateway.accessToken ||
-      !state.adsMcpGateway.adAccountId
-    ) {
-      setAccountStructureSnapshot({
-        status: 'idle',
-        campaigns: [],
-        adSets: [],
-        ads: [],
-        lastSyncedAt: null,
-        error: null,
-      })
-      setSelectedCampaignId('')
-      setSelectedAdSetId('')
-      return
-    }
-
-    let cancelled = false
-
-    setAccountStructureSnapshot((current) => ({
-      ...current,
-      status: 'loading',
-      error: null,
-    }))
-
-    const run = async () => {
-      try {
-        const snapshot = await fetchFacebookAccountStructure(
-          state.adsMcpGateway,
-          state.adsMcpGateway.adAccountId,
-        )
-
-        if (cancelled) {
-          return
-        }
-
-        const lastSyncedAt = new Date().toISOString()
-        setAccountStructureSnapshot({
-          status: 'ready',
-          campaigns: snapshot.campaigns,
-          adSets: snapshot.adSets,
-          ads: snapshot.ads,
-          lastSyncedAt,
-          error: null,
-        })
-        setSelectedCampaignId((current) =>
-          snapshot.campaigns.some((campaign) => campaign.id === current)
-            ? current
-            : snapshot.campaigns[0]?.id ?? '',
-        )
-        setSelectedAdSetId((current) =>
-          snapshot.adSets.some((adSet) => adSet.id === current) ? current : '',
-        )
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setAccountStructureSnapshot({
-          status: 'error',
-          campaigns: [],
-          adSets: [],
-          ads: [],
-          lastSyncedAt: null,
-          error:
-            error instanceof Error ? error.message : 'Failed to fetch Facebook account structure.',
-        })
-      }
-    }
-
-    void run()
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    state.adsMcpGateway.accessToken,
-    state.adsMcpGateway.adAccountId,
-    state.adsMcpGateway.connectionStatus,
-    state.adsMcpGateway.graphVersion,
-    structureRefreshKey,
-  ])
-
-  const activeLibrary = state.library.filter((record) => record.status === 'active')
-  const latestBatch = state.batches[0]
-
-  const batchCreatives = useMemo(() => {
-    if (!latestBatch) {
-      return []
-    }
-    return latestBatch.creativeIds
-      .map((id) => state.creatives.find((creative) => creative.id === id))
-      .filter((creative): creative is CreativeAsset => Boolean(creative))
-  }, [latestBatch, state.creatives])
-
-  const approvedReadyForDraft = state.creatives.filter((creative) => {
-    const alreadyDrafted = state.drafts.some((draft) => draft.creativeId === creative.id)
-    return (
-      creative.reviewStatus === 'approved' &&
-      creative.formatStatus === 'formats_ready' &&
-      creative.selectedPlatforms.length > 0 &&
-      !alreadyDrafted
-    )
-  })
-
-  const funnelTotals = useMemo(() => {
-    return state.metrics.reduce(
-      (totals, metric) => ({
-        spend: totals.spend + metric.spend,
-        clicks: totals.clicks + metric.clicks,
-        landingPageViews: totals.landingPageViews + metric.landingPageViews,
-        registerSubmitted: totals.registerSubmitted + metric.registerSubmitted,
-        emailVerifiedSignups:
-          totals.emailVerifiedSignups + metric.emailVerifiedSignups,
-      }),
-      {
-        spend: 0,
-        clicks: 0,
-        landingPageViews: 0,
-        registerSubmitted: 0,
-        emailVerifiedSignups: 0,
-      },
-    )
-  }, [state.metrics])
-
-  const selectedBatchPlatforms = Array.from(
-    new Set(batchCreatives.flatMap((creative) => creative.selectedPlatforms)),
+  const activeLibrary = useMemo(
+    () => state.library.filter((record) => record.status === 'active'),
+    [state.library],
   )
-  const pendingBatchCreatives = batchCreatives.filter(
-    (creative) => creative.selectedPlatforms.length > 0 && creative.assetDeliverables.length === 0,
+  const latestBatch = state.batches[0] ?? null
+  const latestBatchCreatives = useMemo(
+    () =>
+      latestBatch
+        ? state.creatives.filter((creative) => latestBatch.creativeIds.includes(creative.id))
+        : [],
+    [latestBatch, state.creatives],
   )
-  const filteredAdAccounts = useMemo(() => {
-    const query = adAccountQuery.trim().toLowerCase()
+  const pendingCreatives = latestBatchCreatives.filter((creative) => creative.reviewStatus === 'pending')
+  const approvedCreatives = latestBatchCreatives.filter((creative) => creative.reviewStatus === 'approved')
+
+  const filteredArchive = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
     if (!query) {
-      return state.adsMcpGateway.availableAdAccounts
+      return archive
     }
 
-    return state.adsMcpGateway.availableAdAccounts.filter((account) => {
-      const haystack = [account.name, account.id, account.accountId, account.currency]
+    return archive.filter((item) =>
+      [
+        item.productName,
+        item.creativeVersion,
+        item.headline,
+        item.finalCopy?.headline,
+        item.finalCopy?.primaryText,
+        item.selectedPlatforms.join(' '),
+      ]
+        .filter(Boolean)
         .join(' ')
         .toLowerCase()
-      return haystack.includes(query)
-    })
-  }, [adAccountQuery, state.adsMcpGateway.availableAdAccounts])
-  const visibleAdAccounts = useMemo(() => {
-    if (!state.adsMcpGateway.adAccountId) {
-      return filteredAdAccounts
-    }
-
-    const normalizedSelectedAdAccountId = normalizeFacebookAdAccountId(state.adsMcpGateway.adAccountId)
-    const selectedAccount = state.adsMcpGateway.availableAdAccounts.find(
-      (account) => account.id === normalizedSelectedAdAccountId,
+        .includes(query),
     )
-
-    if (
-      !selectedAccount ||
-      filteredAdAccounts.some((account) => account.id === selectedAccount.id)
-    ) {
-      return filteredAdAccounts
-    }
-
-    return [selectedAccount, ...filteredAdAccounts]
-  }, [
-    filteredAdAccounts,
-    state.adsMcpGateway.adAccountId,
-    state.adsMcpGateway.availableAdAccounts,
-  ])
-  const selectedAdAccount = useMemo(() => {
-    const normalizedSelectedAdAccountId = normalizeFacebookAdAccountId(state.adsMcpGateway.adAccountId)
-    return state.adsMcpGateway.availableAdAccounts.find(
-      (account) => account.id === normalizedSelectedAdAccountId,
-    )
-  }, [state.adsMcpGateway.adAccountId, state.adsMcpGateway.availableAdAccounts])
-  const selectedPixel = useMemo(() => {
-    return state.adsMcpGateway.availablePixels.find((pixel) => pixel.id === state.adsMcpGateway.pixelId)
-  }, [state.adsMcpGateway.availablePixels, state.adsMcpGateway.pixelId])
-  const selectedPage = useMemo(() => {
-    return state.adsMcpGateway.availablePages.find((page) => page.id === state.adsMcpGateway.pageId)
-  }, [state.adsMcpGateway.availablePages, state.adsMcpGateway.pageId])
-  const activeCampaignId = useMemo(() => {
-    if (accountStructureSnapshot.campaigns.some((campaign) => campaign.id === selectedCampaignId)) {
-      return selectedCampaignId
-    }
-
-    return accountStructureSnapshot.campaigns[0]?.id ?? ''
-  }, [accountStructureSnapshot.campaigns, selectedCampaignId])
-  const campaignScopedAdSets = useMemo(() => {
-    return accountStructureSnapshot.adSets.filter((adSet) => adSet.campaignId === activeCampaignId)
-  }, [accountStructureSnapshot.adSets, activeCampaignId])
-  const activeAdSetId = useMemo(() => {
-    if (campaignScopedAdSets.some((adSet) => adSet.id === selectedAdSetId)) {
-      return selectedAdSetId
-    }
-
-    return campaignScopedAdSets[0]?.id ?? ''
-  }, [campaignScopedAdSets, selectedAdSetId])
-  const adSetScopedAds = useMemo(() => {
-    return accountStructureSnapshot.ads.filter((ad) => ad.adSetId === activeAdSetId)
-  }, [accountStructureSnapshot.ads, activeAdSetId])
-  const campaignStats = useMemo(() => {
-    return new Map(
-      accountStructureSnapshot.campaigns.map((campaign) => [
-        campaign.id,
-        {
-          adSetCount: accountStructureSnapshot.adSets.filter(
-            (adSet) => adSet.campaignId === campaign.id,
-          ).length,
-          adCount: accountStructureSnapshot.ads.filter((ad) => ad.campaignId === campaign.id).length,
-        },
-      ]),
-    )
-  }, [accountStructureSnapshot.adSets, accountStructureSnapshot.ads, accountStructureSnapshot.campaigns])
-  const adSetStats = useMemo(() => {
-    return new Map(
-      campaignScopedAdSets.map((adSet) => [
-        adSet.id,
-        accountStructureSnapshot.ads.filter((ad) => ad.adSetId === adSet.id).length,
-      ]),
-    )
-  }, [accountStructureSnapshot.ads, campaignScopedAdSets])
-  const publishableDrafts = state.drafts.filter(
-    (draft) => draft.status === 'ready_to_publish' || draft.status === 'publishing',
-  )
-  const selectedCampaign = useMemo(
-    () => accountStructureSnapshot.campaigns.find((campaign) => campaign.id === activeCampaignId) ?? null,
-    [accountStructureSnapshot.campaigns, activeCampaignId],
-  )
-  const selectedAdSet = useMemo(
-    () => campaignScopedAdSets.find((adSet) => adSet.id === activeAdSetId) ?? null,
-    [campaignScopedAdSets, activeAdSetId],
-  )
-  const activeAdId = useMemo(() => {
-    if (adSetScopedAds.some((ad) => ad.id === selectedAdId)) {
-      return selectedAdId
-    }
-
-    return adSetScopedAds[0]?.id ?? ''
-  }, [adSetScopedAds, selectedAdId])
-  const selectedAd = useMemo(
-    () => adSetScopedAds.find((ad) => ad.id === activeAdId) ?? null,
-    [activeAdId, adSetScopedAds],
-  )
+  }, [archive, searchQuery])
 
   useEffect(() => {
-    if (!isGeneratingBatch && batchCreatives.length === 0) {
+    let cancelled = false
+
+    const run = async () => {
+      try {
+        const rows = await listApprovedArchive()
+        if (cancelled) return
+        setArchive(rows)
+        setArchiveStatus('ready')
+      } catch (error) {
+        if (cancelled) return
+        setArchiveStatus('error')
+        setArchiveError(error instanceof Error ? error.message : '資料庫讀取失敗。')
+      }
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (batchForm.useCaseId) {
       return
     }
 
-    reviewSectionRef.current?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    })
-  }, [batchCreatives.length, isGeneratingBatch])
+    const nextUseCase = activeLibrary.find((record) => record.kind === 'use_case')
+    if (!nextUseCase) {
+      return
+    }
 
-  useEffect(() => {
-    const useCases = activeLibrary.filter((record) => record.kind === 'use_case')
-    const benefits = activeLibrary.filter((record) => record.kind === 'benefit')
-    const benefitIds = new Set(benefits.map((record) => record.id))
+    setBatchForm((current) => ({
+      ...current,
+      useCaseId: nextUseCase.id,
+    }))
+  }, [activeLibrary, batchForm.useCaseId])
 
-    setBatchForm((current) => {
-      const nextUseCaseId = useCases.some((record) => record.id === current.useCaseId)
-        ? current.useCaseId
-        : (useCases[0]?.id ?? '')
-      const nextBenefitIds = current.benefitIds.filter((id) => benefitIds.has(id))
-      const normalizedBenefitIds =
-        nextBenefitIds.length > 0 ? nextBenefitIds : benefits.slice(0, 3).map((record) => record.id)
-
-      if (
-        nextUseCaseId === current.useCaseId &&
-        normalizedBenefitIds.length === current.benefitIds.length &&
-        normalizedBenefitIds.every((id, index) => id === current.benefitIds[index])
-      ) {
-        return current
+  const loadArchive = async (message?: string) => {
+    try {
+      const rows = await listApprovedArchive()
+      setArchive(rows)
+      setArchiveStatus('ready')
+      setArchiveError(null)
+      if (message) {
+        setArchiveMessage(message)
       }
+    } catch (error) {
+      setArchiveStatus('error')
+      setArchiveError(error instanceof Error ? error.message : '資料庫讀取失敗。')
+    }
+  }
 
-      return {
-        ...current,
-        useCaseId: nextUseCaseId,
-        benefitIds: normalizedBenefitIds,
-      }
-    })
-  }, [activeLibrary])
-
-  const handleSaveRecord = () => {
+  const addLibraryRecord = () => {
     if (!form.title.trim() || !form.summary.trim()) {
-      setRequestError('新增 use case / benefit 前，至少要填標題跟摘要。')
+      setRequestError('請先填標題與摘要。')
       return
     }
 
     const timestamp = new Date().toISOString()
     const nextRecord: StrategyRecord = {
-      id: `record-${slugify(form.kind)}-${slugify(form.title)}-${Date.now().toString(36)}`,
+      id: `${form.kind}-${slugify(form.title)}-${Math.random().toString(36).slice(2, 8)}`,
       kind: form.kind,
       title: form.title.trim(),
       summary: form.summary.trim(),
-      notes: form.notes.trim(),
       standardTags: form.standardTags,
       freeformTags: form.freeformTags
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean),
       status: 'active',
+      notes: form.notes.trim(),
       createdAt: timestamp,
       updatedAt: timestamp,
     }
@@ -2505,64 +416,28 @@ function App() {
       ...current,
       library: [nextRecord, ...current.library],
     }))
-    setBatchForm((current) =>
-      nextRecord.kind === 'use_case'
-        ? { ...current, useCaseId: nextRecord.id }
-        : current.benefitIds.length < 5 && !current.benefitIds.includes(nextRecord.id)
-          ? { ...current, benefitIds: [...current.benefitIds, nextRecord.id].slice(0, 5) }
-          : current,
-    )
-    setSelectedKind(nextRecord.kind)
-    setForm(buildEmptyForm())
-    setRequestError(null)
-    setBatchStatusMessage(
-      nextRecord.kind === 'use_case'
-        ? `已新增 use case「${nextRecord.title}」，也幫你切成這次 batch 的主軸。`
-        : `已新增 benefit「${nextRecord.title}」。`,
-    )
-  }
 
-  const handleUseCaseChange = (useCaseId: string) => {
-    setBatchForm((current) => ({
-      ...current,
-      useCaseId,
-    }))
-  }
-
-  const handleAssetUpload = (
-    field: 'logoAsset' | 'productAsset',
-    fileList: FileList | null,
-  ) => {
-    const file = fileList?.[0]
-
-    if (field === 'logoAsset') {
-      setLogoFile(file ?? null)
-      return setBatchForm((current) => ({
+    if (nextRecord.kind === 'use_case') {
+      setBatchForm((current) => ({ ...current, useCaseId: nextRecord.id }))
+    } else {
+      setBatchForm((current) => ({
         ...current,
-        logoAsset: file?.name ?? '',
+        benefitIds: current.benefitIds.includes(nextRecord.id)
+          ? current.benefitIds
+          : [...current.benefitIds, nextRecord.id].slice(0, 6),
       }))
     }
 
-    setProductImageFile(file ?? null)
-
-    setBatchForm((current) => ({
-      ...current,
-      productAsset: file?.name ?? '',
-    }))
+    setForm(buildEmptyForm())
+    setRequestError(null)
   }
 
   const handleGenerateBatch = async () => {
-    if (
-      !batchForm.useCaseId ||
-      !batchForm.productName.trim() ||
-      batchForm.benefitIds.length < 3 ||
-      !logoFile
-    ) {
+    if (!batchForm.useCaseId || !batchForm.productName.trim() || batchForm.benefitIds.length < 3 || !logoFile) {
       setRequestError('請填完產品名稱、至少 3 個 benefits，並上傳 logo。')
       return
     }
 
-    const timestamp = new Date().toISOString()
     const useCase = activeLibrary.find((record) => record.id === batchForm.useCaseId)
     const benefits = batchForm.benefitIds
       .map((id) => activeLibrary.find((record) => record.id === id))
@@ -2573,23 +448,14 @@ function App() {
       return
     }
 
-    const angleId = `ANGLE-${slugify(useCase.title)}-${slugify(benefits[0].title)}`
-      .toUpperCase()
-      .slice(0, 28)
-    const productName = batchForm.productName.trim()
-    const productLink = batchForm.productLink.trim()
-    const logoAsset = logoFile.name
-    const productAsset = productImageFile?.name ?? ''
-    const additionalNotes = batchForm.additionalNotes.trim()
-
     const payload = new FormData()
-    payload.append('productName', productName)
+    payload.append('productName', batchForm.productName.trim())
     payload.append('useCaseId', useCase.id)
     payload.append('useCaseTitle', useCase.title)
     payload.append('benefitIds', JSON.stringify(batchForm.benefitIds))
     payload.append('benefitTitles', JSON.stringify(benefits.map((benefit) => benefit.title)))
-    payload.append('productLink', productLink)
-    payload.append('additionalNotes', additionalNotes)
+    payload.append('productLink', batchForm.productLink.trim())
+    payload.append('additionalNotes', batchForm.additionalNotes.trim())
     payload.append('logo', logoFile)
 
     if (productImageFile) {
@@ -2597,7 +463,8 @@ function App() {
     }
 
     setRequestError(null)
-    setBatchStatusMessage('正在送到 creative.bktsai.link，等待 3 組審稿素材回傳…')
+    setArchiveMessage(null)
+    setBatchStatusMessage('正在生成 review creatives...')
     setIsGeneratingBatch(true)
 
     try {
@@ -2606,7 +473,7 @@ function App() {
           method: 'POST',
           body: payload,
         }),
-        waitAtLeast(900),
+        waitAtLeast(800),
       ])
 
       if (!response.ok) {
@@ -2614,18 +481,20 @@ function App() {
       }
 
       const result = (await response.json()) as ReviewResponse
+      const timestamp = new Date().toISOString()
+      const angleId = `ANGLE-${slugify(useCase.title)}-${slugify(benefits[0].title)}`.toUpperCase().slice(0, 28)
       const creativeIds = result.creatives.map((creative) => `${result.batchId}:${creative.creativeId}`)
       const batch: CreativeBatch = {
         id: result.batchId,
         useCaseId: useCase.id,
-        productName,
+        productName: batchForm.productName.trim(),
         benefitIds: batchForm.benefitIds,
         angleId,
         promptVersion: result.promptVersion,
-        productLink,
-        logoAsset,
-        productAsset,
-        additionalNotes,
+        productLink: batchForm.productLink.trim(),
+        logoAsset: logoFile.name,
+        productAsset: productImageFile?.name ?? '',
+        additionalNotes: batchForm.additionalNotes.trim(),
         createdAt: timestamp,
         creativeIds,
       }
@@ -2655,14 +524,14 @@ function App() {
         copyDeliverables: null,
         assetDeliverables: [],
         metadata: {
-          icp: '電商品牌',
+          icp: 'TW',
           useCaseId: useCase.id,
-          productName,
+          productName: batchForm.productName.trim(),
           benefitIds: batchForm.benefitIds,
-          productLink,
-          logoAsset,
-          productAsset,
-          additionalNotes,
+          productLink: batchForm.productLink.trim(),
+          logoAsset: logoFile.name,
+          productAsset: productImageFile?.name ?? '',
+          additionalNotes: batchForm.additionalNotes.trim(),
           createdAt: timestamp,
         },
         promptVersion: result.promptVersion,
@@ -2675,13 +544,33 @@ function App() {
         batches: [batch, ...current.batches],
         creatives: [...creatives, ...current.creatives],
       }))
-      setBatchStatusMessage(`已回傳 ${result.creatives.length} 組審稿素材，請先人工審核再選平台。`)
+      setBatchStatusMessage(`已生成 ${creatives.length} 組 review creatives，選平台後直接 approve 即會寫入資料庫。`)
     } catch (error) {
-      setBatchStatusMessage(null)
       setRequestError(error instanceof Error ? error.message : '批次生成失敗。')
+      setBatchStatusMessage(null)
     } finally {
       setIsGeneratingBatch(false)
     }
+  }
+
+  const toggleCreativePlatform = (creativeId: string, platform: Platform) => {
+    setState((current) => ({
+      ...current,
+      creatives: current.creatives.map((creative) => {
+        if (creative.id !== creativeId) {
+          return creative
+        }
+
+        const selectedPlatforms = creative.selectedPlatforms.includes(platform)
+          ? creative.selectedPlatforms.filter((item) => item !== platform)
+          : [...creative.selectedPlatforms, platform]
+
+        return {
+          ...creative,
+          selectedPlatforms,
+        }
+      }),
+    }))
   }
 
   const rejectCreative = (creativeId: string, reason: string) => {
@@ -2693,1987 +582,545 @@ function App() {
               ...creative,
               reviewStatus: 'rejected',
               rejectionReason: reason,
-              formatStatus: 'square_only',
             }
           : creative,
       ),
     }))
   }
 
-  const toggleBatchPlatform = (platform: Platform) => {
-    if (!latestBatch) {
-      return
-    }
-
-    setState((current) => ({
-      ...current,
-      creatives: current.creatives.map((creative) => {
-        if (!latestBatch.creativeIds.includes(creative.id)) {
-          return creative
-        }
-
-        const selectedPlatforms = creative.selectedPlatforms.includes(platform)
-          ? creative.selectedPlatforms.filter((item) => item !== platform)
-          : [...creative.selectedPlatforms, platform]
-
-        return {
-          ...creative,
-          selectedPlatforms,
-          formatStatus:
-            creative.reviewStatus === 'approved' && selectedPlatforms.length > 0
-              ? 'formats_ready'
-              : 'square_only',
-        }
-      }),
-    }))
-  }
-
-  const requestFormatsForCreative = async (creative: CreativeAsset) => {
-    let response: Response
-    const requestedFormats = buildRequestedFormats(creative.selectedPlatforms)
-
-    try {
-      response = await fetch(`${CREATIVE_API_BASE}/generate-formats`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          batchId: creative.batchId,
-          creativeId: creative.sourceCreativeId,
-          selectedPlatforms: creative.selectedPlatforms,
-          requestedFormats,
-          strictAspectRatios: true,
-          formatStrategy: 'low_risk_extend',
-        }),
-      })
-    } catch (error) {
-      throw new Error(
-        `素材 ${creative.creativeVersion} 連線失敗，請再試一次。${
-          error instanceof Error && error.message ? ` (${error.message})` : ''
-        }`,
-      )
-    }
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response))
-    }
-
-    return (await response.json()) as FormatsResponse
-  }
-
-  const applyFormatsResult = (creative: CreativeAsset, result: FormatsResponse) => {
-    const primaryCopy = result.copyDeliverables?.meta_ad ?? result.finalCopy ?? null
-    const normalizedAssets = normalizeReturnedAssets(result.assetDeliverables)
-    const missingMetaFeedAssets = creative.selectedPlatforms.filter((platform) =>
-      ['Facebook', 'Instagram', 'Threads'].includes(platform),
-    ).filter(
-      (platform) =>
-        !normalizedAssets.some(
-          (asset) => asset.platform === platform && asset.aspectRatio === '4:5',
-        ),
-    )
-
-    setState((current) => ({
-      ...current,
-      creatives: current.creatives.map((item) =>
-        item.id === creative.id
-          ? {
-              ...item,
-              reviewStatus: 'approved',
-              rejectionReason: null,
-              formatStatus: 'formats_ready',
-              finalCopy: primaryCopy,
-              copyDeliverables: result.copyDeliverables ?? null,
-              assetDeliverables: normalizedAssets,
-            }
-          : item,
-      ),
-    }))
-
-    if (missingMetaFeedAssets.length > 0) {
-      setRequestError(
-        `Approved 完成，但沒拿到 ${missingMetaFeedAssets.join(', ')} 的 4:5 素材。這次已改成明確要求 4:5；如果還出錯，請再試一次讓我看新回傳。`,
-      )
-    }
-  }
-
   const approveCreative = async (creativeId: string) => {
     const creative = state.creatives.find((item) => item.id === creativeId)
     if (!creative || creative.selectedPlatforms.length === 0) {
-      setRequestError('請先選至少 1 個平台，再按 Approved。')
+      setRequestError('請先選至少 1 個平台，再按 approve。')
       return
     }
 
-    setRequestError(null)
     setApprovingCreativeId(creativeId)
+    setRequestError(null)
+    setArchiveMessage(null)
 
     try {
       const result = await requestFormatsForCreative(creative)
-      applyFormatsResult(creative, result)
+      const normalizedAssets = normalizeReturnedAssets(result.assetDeliverables)
+      const primaryCopy = result.copyDeliverables?.meta_ad ?? result.finalCopy ?? null
+      const approvedCreative: CreativeAsset = {
+        ...creative,
+        reviewStatus: 'approved',
+        rejectionReason: null,
+        formatStatus: 'formats_ready',
+        finalCopy: primaryCopy,
+        copyDeliverables: result.copyDeliverables ?? null,
+        assetDeliverables: normalizedAssets,
+      }
+
+      setState((current) => ({
+        ...current,
+        creatives: current.creatives.map((item) => (item.id === creativeId ? approvedCreative : item)),
+      }))
+      await upsertApprovedArchive(buildArchiveRecord(approvedCreative))
+      await loadArchive(`已將 ${approvedCreative.creativeVersion} 存進 approved archive。`)
     } catch (error) {
-      setRequestError(error instanceof Error ? error.message : '版位生成失敗。')
+      setRequestError(error instanceof Error ? error.message : 'approve 失敗。')
     } finally {
       setApprovingCreativeId(null)
     }
   }
 
-  const approveBatchCreatives = async () => {
-    if (pendingBatchCreatives.length === 0) {
-      setRequestError('請先選至少 1 個平台，再按 Approve all。')
+  const approveAllPending = async () => {
+    const queue = pendingCreatives.filter((creative) => creative.selectedPlatforms.length > 0)
+    if (queue.length === 0) {
+      setRequestError('目前沒有可 approve 的 creative。')
       return
     }
 
-    setRequestError(null)
     setIsApprovingBatch(true)
+    setRequestError(null)
+    setArchiveMessage(null)
+
+    const failures: string[] = []
+    let successCount = 0
 
     try {
-      const failures: string[] = []
-      let successCount = 0
-
-      for (const creative of pendingBatchCreatives) {
+      for (const creative of queue) {
         try {
           const result = await requestFormatsForCreative(creative)
-          applyFormatsResult(creative, result)
+          const normalizedAssets = normalizeReturnedAssets(result.assetDeliverables)
+          const primaryCopy = result.copyDeliverables?.meta_ad ?? result.finalCopy ?? null
+          const approvedCreative: CreativeAsset = {
+            ...creative,
+            reviewStatus: 'approved',
+            rejectionReason: null,
+            formatStatus: 'formats_ready',
+            finalCopy: primaryCopy,
+            copyDeliverables: result.copyDeliverables ?? null,
+            assetDeliverables: normalizedAssets,
+          }
+
+          setState((current) => ({
+            ...current,
+            creatives: current.creatives.map((item) => (item.id === creative.id ? approvedCreative : item)),
+          }))
+          await upsertApprovedArchive(buildArchiveRecord(approvedCreative))
           successCount += 1
         } catch (error) {
-          failures.push(
-            error instanceof Error
-              ? `${creative.creativeVersion}: ${error.message}`
-              : `${creative.creativeVersion}: 版位生成失敗。`,
-          )
+          failures.push(error instanceof Error ? `${creative.creativeVersion}: ${error.message}` : creative.creativeVersion)
         }
       }
 
-      if (successCount > 0 && failures.length === 0) {
-        setBatchStatusMessage(`已完成 ${successCount} 組版位素材。`)
-      } else if (successCount > 0) {
-        setBatchStatusMessage(`已完成 ${successCount} 組版位素材，${failures.length} 組失敗。`)
-        setRequestError(failures.join(' | '))
-      } else if (failures.length > 0) {
+      await loadArchive(successCount > 0 ? `已新增 ${successCount} 筆 approved creative 到資料庫。` : undefined)
+
+      if (failures.length > 0) {
         setRequestError(failures.join(' | '))
       }
-    } catch (error) {
-      setRequestError(error instanceof Error ? error.message : '整批版位生成失敗。')
     } finally {
       setIsApprovingBatch(false)
     }
   }
 
-  const createDraftAds = () => {
-    if (approvedReadyForDraft.length === 0) {
-      return
-    }
-
-    const createdAt = new Date().toISOString()
-
-    const newDrafts: DraftAd[] = approvedReadyForDraft.map((creative) => {
-      const adsPlan = buildAdsPlan(creative)
-      const publishBundle = buildPublishBundle(creative, adsPlan, state.adsMcpGateway)
-
-      return {
-        id: `draft-${creative.id}`,
-        creativeId: creative.id,
-        batchId: creative.batchId,
-        status: 'draft',
-        campaignName: adsPlan.campaign.campaignName,
-        adsetName: adsPlan.adSet.adsetName,
-        adName: adsPlan.ad.adName,
-        primaryText: getPrimaryCopy(creative)?.primaryText ?? creative.body,
-        headline: getPrimaryCopy(creative)?.headline ?? creative.headline,
-        description:
-          getPrimaryCopy(creative)?.description ??
-          'creative.bktsai.link 已依勾選平台回傳正確尺寸素材。',
-        destinationUrl: getDestinationUrl(creative),
-        assetDeliverables: buildAssetDeliverables(creative),
-        publishBundle,
-        adsPlan,
-        metadata: {
-          icp: creative.metadata.icp,
-          useCaseId: creative.metadata.useCaseId,
-          productName: creative.metadata.productName,
-          benefitIds: creative.metadata.benefitIds,
-          angleId: creative.angleId,
-          creativeVersion: creative.creativeVersion,
-          selectedPlatforms: creative.selectedPlatforms,
-          createdAt,
-        },
-        createdAt,
-        publishAttempts: 0,
-        publishedAt: null,
-      }
-    })
-
-    setState((current) => ({
-      ...current,
-      drafts: [...newDrafts, ...current.drafts],
-    }))
-  }
-
-  const updateAdsMcpGateway = (patch: Partial<AdsMcpGatewayConfig>) => {
-    setState((current) => {
-      const nextGateway = {
-        ...current.adsMcpGateway,
-        ...patch,
-      }
-
-      return {
-        ...current,
-        adsMcpGateway: nextGateway,
-        drafts: current.drafts.map((draft) => ({
-          ...draft,
-          publishBundle: {
-            ...draft.publishBundle,
-            adsMcpPayload: buildAdsMcpPayloadPreview({
-              gateway: nextGateway,
-              campaignPayload: draft.publishBundle.campaignPayload,
-              adSetPayload: draft.publishBundle.adSetPayload,
-              adPayload: draft.publishBundle.adPayload,
-              copyPayload: draft.publishBundle.copyPayload,
-              assetSelections: draft.publishBundle.assetSelections,
-              status: draft.status,
-            }),
-            submission: draft.publishBundle.submission.requestId
-              ? draft.publishBundle.submission
-              : {
-                  ...draft.publishBundle.submission,
-                  mode: nextGateway.mode,
-                },
-          },
-        })),
-      }
-    })
-  }
-
-  const connectFacebookAds = async () => {
-    if (!state.adsMcpGateway.appId.trim()) {
-      setPublishStatusMessage('缺少 VITE_FACEBOOK_APP_ID，還不能啟動 Facebook OAuth。')
-      return
-    }
-
-    const oauthState = `fb_${Math.random().toString(36).slice(2, 12)}`
-    setIsConnectingFacebook(true)
-    setState((current) => ({
-      ...current,
-      adsMcpGateway: {
-        ...current.adsMcpGateway,
-        oauthState,
-        connectionStatus: 'authorizing',
-        lastError: null,
-      },
-    }))
-    window.location.assign(buildFacebookOauthUrl(state.adsMcpGateway, oauthState))
-  }
-
-  const disconnectFacebookAds = () => {
-    setState((current) => ({
-      ...current,
-      adsMcpGateway: {
-        ...current.adsMcpGateway,
-        mode: current.adsMcpGateway.endpointUrl.trim() ? 'remote' : 'demo',
-        connectionStatus: 'disconnected',
-        businessName: null,
-        availableAdAccounts: [],
-        availablePixels: [],
-        availablePages: [],
-        adAccountId: '',
-        pixelId: '',
-        pageId: '',
-        accessToken: null,
-        tokenExpiresAt: null,
-        grantedScopes: [],
-        oauthState: null,
-        lastError: null,
-      },
-    }))
-    setIsConnectingFacebook(false)
-    setPublishStatusMessage('已清除 Facebook 連線。')
-  }
-
-  const selectFacebookAdAccount = async (adAccountId: string) => {
-    setIsConnectingFacebook(true)
-    updateAdsMcpGateway({
-      adAccountId,
-      pixelId: '',
-      availablePixels: [],
-      lastError: null,
-    })
-
-    try {
-      const availablePixels = await fetchFacebookPixels(
-        {
-          ...state.adsMcpGateway,
-          adAccountId,
-        },
-        adAccountId,
-      )
-
-      updateAdsMcpGateway({
-        adAccountId,
-        availablePixels,
-        pixelId: availablePixels[0]?.id ?? '',
-        connectionStatus: 'connected',
-      })
-      setPublishStatusMessage('已更新 ad account，並重新抓回 pixels。')
-    } catch (error) {
-      updateAdsMcpGateway({
-        connectionStatus: 'error',
-        lastError: error instanceof Error ? error.message : 'Failed to fetch pixels.',
-      })
-      setPublishStatusMessage(
-        `Pixel 抓取失敗：${error instanceof Error ? error.message : 'unknown error'}`,
-      )
-    } finally {
-      setIsConnectingFacebook(false)
-    }
-  }
-
-  const selectFacebookPage = (pageId: string) => {
-    updateAdsMcpGateway({
-      pageId,
-      lastError: null,
-    })
-    setPublishStatusMessage('已更新 Facebook Page，之後 publish 會用這個 Page 建 ad creative。')
-  }
-
-  const prepareDraftForPublish = (draftId: string) => {
-    const timestamp = new Date().toISOString()
-    setState((current) => ({
-      ...current,
-      drafts: current.drafts.map((draft) => {
-        if (draft.id !== draftId) {
-          return draft
-        }
-
-        const checklist = buildPublishChecklist({
-          copyPayload: draft.publishBundle.copyPayload,
-          assetSelections: draft.publishBundle.assetSelections,
-        })
-
-        return {
-          ...draft,
-          status:
-            checklist.hasCopy &&
-            checklist.hasDestinationUrl &&
-            checklist.hasSelectedAssets
-              ? 'ready_to_publish'
-              : 'failed',
-          publishBundle: {
-            ...draft.publishBundle,
-            adsMcpPayload: buildAdsMcpPayloadPreview({
-              gateway: current.adsMcpGateway,
-              campaignPayload: draft.publishBundle.campaignPayload,
-              adSetPayload: draft.publishBundle.adSetPayload,
-              adPayload: draft.publishBundle.adPayload,
-              copyPayload: draft.publishBundle.copyPayload,
-              assetSelections: draft.publishBundle.assetSelections,
-              status:
-                checklist.hasCopy &&
-                checklist.hasDestinationUrl &&
-                checklist.hasSelectedAssets
-                  ? 'ready_to_publish'
-                  : 'failed',
-            }),
-            submission: {
-              ...buildSubmissionRecord(),
-              mode: current.adsMcpGateway.mode,
-            },
-            checklist,
-            preparedAt: timestamp,
-            lastError:
-              checklist.hasCopy &&
-              checklist.hasDestinationUrl &&
-              checklist.hasSelectedAssets
-                ? null
-                : 'Publish bundle 缺少必要 copy、URL 或素材選擇。',
-          },
-        }
-      }),
-    }))
-  }
-
-  const publishDraftToAdsMcp = async (draftId: string) => {
-    const draft = state.drafts.find((item) => item.id === draftId)
-    if (!draft) {
-      return
-    }
-
-    if (state.adsMcpGateway.connectionStatus !== 'connected') {
-      setPublishStatusMessage('請先完成 Facebook 連線，再送出 publish。')
-      return
-    }
-
-    if (
-      state.adsMcpGateway.mode === 'remote' &&
-      !hasGrantedScope(state.adsMcpGateway.grantedScopes, 'ads_mcp_management')
-    ) {
-      setPublishStatusMessage(
-        `目前 token 沒有拿到 ads_mcp_management。請先 Reconnect Facebook，並確認授權 scopes 真的包含 ads_mcp_management。現在拿到的是：${
-          state.adsMcpGateway.grantedScopes.join(', ') || 'none'
-        }`,
-      )
-      return
-    }
-
-    if (
-      !state.adsMcpGateway.adAccountId.trim() ||
-      !state.adsMcpGateway.pixelId.trim() ||
-      !state.adsMcpGateway.pageId.trim()
-    ) {
-      setPublishStatusMessage('請先選擇 ad account、pixel 與 Facebook Page。')
-      return
-    }
-
-    if (
-      state.adsMcpGateway.mode === 'remote' &&
-      (!state.adsMcpGateway.endpointUrl.trim() ||
-        !state.adsMcpGateway.adAccountId.trim() ||
-        !state.adsMcpGateway.pixelId.trim() ||
-        !state.adsMcpGateway.pageId.trim())
-    ) {
-      setPublishStatusMessage('Remote mode 需要 endpoint、ad account id、pixel id、page id 才能送出。')
-      return
-    }
-
-    const submittedAt = new Date().toISOString()
-    setPublishingDraftId(draftId)
-    setPublishStatusMessage(
-      `正在送出 ${draft.publishBundle.adPayload.name} 到 ${
-        state.adsMcpGateway.mode === 'demo'
-          ? 'demo gateway'
-          : 'Meta Ads MCP'
-      }...`,
-    )
-
-    setState((current) => ({
-      ...current,
-      drafts: current.drafts.map((item) =>
-        item.id === draftId
-          ? {
-              ...item,
-              status: 'publishing',
-              publishAttempts: item.publishAttempts + 1,
-              publishBundle: {
-                ...item.publishBundle,
-                adsMcpPayload: buildAdsMcpPayloadPreview({
-                  gateway: current.adsMcpGateway,
-                  campaignPayload: item.publishBundle.campaignPayload,
-                  adSetPayload: item.publishBundle.adSetPayload,
-                  adPayload: item.publishBundle.adPayload,
-                  copyPayload: item.publishBundle.copyPayload,
-                  assetSelections: item.publishBundle.assetSelections,
-                  status: 'publishing',
-                }),
-                submission: {
-                  ...item.publishBundle.submission,
-                  mode: current.adsMcpGateway.mode,
-                  submittedAt,
-                  completedAt: null,
-                  responseCode: null,
-                  responseBody: null,
-                },
-                lastError: null,
-              },
-            }
-          : item,
-      ),
-    }))
-
-    try {
-      const payload = buildAdsMcpPayloadPreview({
-        gateway: state.adsMcpGateway,
-        campaignPayload: draft.publishBundle.campaignPayload,
-        adSetPayload: draft.publishBundle.adSetPayload,
-        adPayload: draft.publishBundle.adPayload,
-        copyPayload: draft.publishBundle.copyPayload,
-        assetSelections: draft.publishBundle.assetSelections,
-        status: 'publishing',
-      })
-      const result = await executeAdsMcpPublish(state.adsMcpGateway, payload)
-      const completedAt = new Date().toISOString()
-
-      setState((current) => ({
-        ...current,
-        adsMcpGateway: {
-          ...current.adsMcpGateway,
-          lastValidatedAt: completedAt,
-        },
-        drafts: current.drafts.map((item) =>
-          item.id === draftId
-            ? {
-                ...item,
-                status: 'published',
-                publishedAt: completedAt,
-                publishBundle: {
-                  ...item.publishBundle,
-                  adsMcpPayload: buildAdsMcpPayloadPreview({
-                    gateway: current.adsMcpGateway,
-                    campaignPayload: item.publishBundle.campaignPayload,
-                    adSetPayload: item.publishBundle.adSetPayload,
-                    adPayload: item.publishBundle.adPayload,
-                    copyPayload: item.publishBundle.copyPayload,
-                    assetSelections: item.publishBundle.assetSelections,
-                    status: 'published',
-                  }),
-                  submission: {
-                    mode: current.adsMcpGateway.mode,
-                    requestId: result.requestId,
-                    submittedAt,
-                    completedAt,
-                    responseCode: result.responseCode,
-                    responseBody: result.responseBody,
-                    externalCampaignId: result.externalCampaignId,
-                    externalAdSetId: result.externalAdSetId,
-                    externalAdId: result.externalAdId,
-                  },
-                  preparedAt: item.publishBundle.preparedAt ?? submittedAt,
-                  lastError: null,
-                },
-              }
-            : item,
-        ),
-      }))
-
-      setPublishStatusMessage(`已送出 ${draft.publishBundle.adPayload.name}，並回寫 published 狀態。`)
-    } catch (error) {
-      const completedAt = new Date().toISOString()
-      const message = error instanceof Error ? error.message : 'Ads MCP publish failed'
-
-      setState((current) => ({
-        ...current,
-        drafts: current.drafts.map((item) =>
-          item.id === draftId
-            ? {
-                ...item,
-                status: 'failed',
-                publishBundle: {
-                  ...item.publishBundle,
-                  adsMcpPayload: buildAdsMcpPayloadPreview({
-                    gateway: current.adsMcpGateway,
-                    campaignPayload: item.publishBundle.campaignPayload,
-                    adSetPayload: item.publishBundle.adSetPayload,
-                    adPayload: item.publishBundle.adPayload,
-                    copyPayload: item.publishBundle.copyPayload,
-                    assetSelections: item.publishBundle.assetSelections,
-                    status: 'failed',
-                  }),
-                  submission: {
-                    ...item.publishBundle.submission,
-                    mode: current.adsMcpGateway.mode,
-                    submittedAt,
-                    completedAt,
-                    responseBody: message,
-                  },
-                  lastError: message,
-                },
-              }
-            : item,
-        ),
-      }))
-      setPublishStatusMessage(`送出失敗：${message}`)
-    } finally {
-      setPublishingDraftId(null)
-    }
-  }
-
-  const syncAirbyteDemo = () => {
-    const publishedDrafts = state.drafts.filter((draft) => draft.status === 'published')
-    if (publishedDrafts.length === 0) {
-      return
-    }
-
-    const syncedAt = new Date().toISOString()
-    const metrics: AnalyticsMetric[] = publishedDrafts.map((draft) => {
-      const useCaseTitle =
-        lookupRecord(state.library, draft.metadata.useCaseId)?.title ?? '會員喚回'
-      const benefitTitle =
-        lookupRecord(state.library, draft.metadata.benefitIds[0])?.title ?? '可追蹤點擊'
-      const seed = stringScore(
-        `${draft.id}${useCaseTitle}${benefitTitle}${draft.metadata.selectedPlatforms.join('')}`,
-      )
-      const impressions = 2200 + (seed % 4200)
-      const frequency = 1.2 + ((seed % 33) / 10)
-      const ctr = 0.9 + ((seed % 30) / 10)
-      const clicks = Math.round((impressions * ctr) / 100)
-      const spend = 36 + ((seed % 1100) / 10)
-      const landingPageViews = Math.max(18, Math.round(clicks * 0.72))
-      const registerSubmitted = Math.max(6, Math.round(landingPageViews * 0.36))
-      const emailVerifiedSignups = Math.max(2, Math.round(registerSubmitted * 0.62))
-      const cpc = spend / Math.max(clicks, 1)
-      const costPerVerifiedSignup = spend / Math.max(emailVerifiedSignups, 1)
-
-      return {
-        id: `metric-${draft.id}`,
-        draftId: draft.id,
-        creativeId: draft.creativeId,
-        spend,
-        impressions,
-        frequency,
-        clicks,
-        ctr,
-        cpc,
-        landingPageViews,
-        registerSubmitted,
-        emailVerifiedSignups,
-        costPerVerifiedSignup,
-        syncedAt,
-      }
-    })
-
-    setState((current) => ({
-      ...current,
-      metrics,
-    }))
-  }
-
-  const resetDemo = () => {
-    setState(initialState)
-    setSelectedKind('use_case')
-    setForm(buildEmptyForm())
-    setBatchForm(buildBatchForm(initialState.library))
-    setLogoFile(null)
-    setProductImageFile(null)
-    setRequestError(null)
-    setBatchStatusMessage(null)
-    setIsGeneratingBatch(false)
-    setApprovingCreativeId(null)
-    setSelectedCampaignId('')
-    setSelectedAdSetId('')
-    setSelectedAdId('')
-  }
+  const activeUseCases = activeLibrary.filter((record) => record.kind === 'use_case')
+  const activeBenefits = activeLibrary.filter((record) => record.kind === 'benefit')
 
   return (
     <div className="shell">
-      <header className="hero-panel">
-        <div className="brand-cluster">
-          <img className="brand-mark" src={logoUrl} alt="lihi" />
+      <section className="hero-panel">
+        <div className="hero-copy">
+          <img className="brand-mark" src={logoUrl} alt="lihi logo" />
           <div>
-            <p className="eyebrow">lihiSMS growth operating console</p>
-            <h1>把生成、審稿、draft、publish 收進一條更短的投放流程。</h1>
+            <p className="eyebrow">lihiSMS creative archive</p>
+            <h1>Approved 後直接進資料庫，不再經過 Facebook MCP。</h1>
             <p className="hero-note">
-              先產 1:1 審稿、核准後補齊版位、最後整理成 Facebook draft。主畫面只留會直接影響投放的資訊。
+              流程只保留三段：生成 review creatives、人工 approve、寫入 approved archive database。
             </p>
           </div>
-          <div className="hero-steps">
-            <article>
-              <span>01</span>
-              <strong>Generate batch</strong>
-            </article>
-            <article>
-              <span>02</span>
-              <strong>Approve creatives</strong>
-            </article>
-            <article>
-              <span>03</span>
-              <strong>Publish paused drafts</strong>
-            </article>
-          </div>
         </div>
-      </header>
+        <div className="hero-metrics">
+          <article>
+            <span>Latest Batch</span>
+            <strong>{latestBatch ? latestBatch.productName : '尚未生成'}</strong>
+          </article>
+          <article>
+            <span>Pending Review</span>
+            <strong>{pendingCreatives.length}</strong>
+          </article>
+          <article>
+            <span>Approved DB Rows</span>
+            <strong>{archive.length}</strong>
+          </article>
+        </div>
+      </section>
 
-      <main className="dashboard dashboard-refined">
-        <section className="panel span-two panel-priority">
+      <section className="dashboard">
+        <article className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">01 / Launch batch</p>
-              <h2>先把這次要投的素材批次建出來</h2>
+              <p className="eyebrow">Step 1</p>
+              <h2>Strategy Library</h2>
             </div>
-            <div className="header-actions">
-              <span className="pill active">creative.bktsai.link live bridge</span>
-              <button className="ghost-button" type="button" onClick={resetDemo}>
-                Reset demo state
-              </button>
-            </div>
-          </div>
-
-          <div className="launch-layout">
-            <div className="launch-builder-stack">
-              <div className="builder-grid">
-              <label>
-                Use case
-                <select
-                  value={batchForm.useCaseId}
-                  onChange={(event) => handleUseCaseChange(event.target.value)}
-                >
-                  {activeLibrary
-                    .filter((record) => record.kind === 'use_case')
-                    .map((record) => (
-                      <option key={record.id} value={record.id}>
-                        {record.title}
-                      </option>
-                    ))}
-                </select>
-              </label>
-
-              <div>
-                <span className="field-label">Benefits (3-5)</span>
-                <div className="checkbox-grid">
-                  {activeLibrary
-                    .filter((record) => record.kind === 'benefit')
-                    .map((record) => (
-                      <label key={record.id} className="check-chip">
-                        <input
-                          type="checkbox"
-                          checked={batchForm.benefitIds.includes(record.id)}
-                          onChange={(event) =>
-                            setBatchForm((current) => {
-                              const next = event.target.checked
-                                ? [...current.benefitIds, record.id].slice(0, 5)
-                                : current.benefitIds.filter((id) => id !== record.id)
-                              return { ...current, benefitIds: next }
-                            })
-                          }
-                        />
-                        <span>{record.title}</span>
-                      </label>
-                    ))}
-                </div>
-                <p className="helper-copy">最少選 3 個，最多 5 個 benefits。</p>
-              </div>
-
-              <label>
-                產品名稱
-                <input
-                  placeholder="例如 lihiSMS"
-                  value={batchForm.productName}
-                  onChange={(event) =>
-                    setBatchForm((current) => ({
-                      ...current,
-                      productName: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-
-              <label>
-                Product / service link
-                <input
-                  placeholder="https://..."
-                  value={batchForm.productLink}
-                  onChange={(event) =>
-                    setBatchForm((current) => ({
-                      ...current,
-                      productLink: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-
-              <div className="asset-grid">
-                <label>
-                  Logo required
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => handleAssetUpload('logoAsset', event.target.files)}
-                  />
-                  <span className="helper-copy">
-                    {batchForm.logoAsset ? `已上傳：${batchForm.logoAsset}` : '請上傳 logo 圖檔'}
-                  </span>
-                </label>
-                <label>
-                  Product image optional
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => handleAssetUpload('productAsset', event.target.files)}
-                  />
-                  <span className="helper-copy">
-                    {batchForm.productAsset ? `已上傳：${batchForm.productAsset}` : '可選填產品圖檔'}
-                  </span>
-                </label>
-              </div>
-
-              <label>
-                其他想補充內容
-                <textarea
-                  rows={4}
-                  placeholder="例如想強調轉單、避免太硬銷、或指定某些產品賣點"
-                  value={batchForm.additionalNotes}
-                  onChange={(event) =>
-                    setBatchForm((current) => ({
-                      ...current,
-                      additionalNotes: event.target.value,
-                    }))
-                  }
-                  />
-                </label>
-              </div>
-
-              <aside className="editor-card library-editor-card">
-                <div className="library-inline-header">
-                  <div>
-                    <p className="eyebrow">Use case / benefit editor</p>
-                    <h3>直接在這裡補 library</h3>
-                  </div>
-                  <div className="library-inline-actions">
-                    {(['use_case', 'benefit'] as LibraryKind[]).map((kind) => (
-                      <button
-                        key={kind}
-                        type="button"
-                        className={selectedKind === kind ? 'chip active' : 'chip'}
-                        onClick={() => {
-                          setSelectedKind(kind)
-                          setForm((current) => ({
-                            ...current,
-                            kind,
-                            standardTags: [],
-                          }))
-                        }}
-                      >
-                        {kind === 'use_case' ? 'Use case' : 'Benefit'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="library-inline-list">
-                  {activeLibrary
-                    .filter((record) => record.kind === selectedKind)
-                    .slice(0, 6)
-                    .map((record) => (
-                      <button
-                        key={record.id}
-                        type="button"
-                        className={`library-inline-pill ${
-                          selectedKind === 'use_case' && batchForm.useCaseId === record.id ? 'active' : ''
-                        }`}
-                        onClick={() => {
-                          if (record.kind === 'use_case') {
-                            handleUseCaseChange(record.id)
-                          }
-                        }}
-                      >
-                        {record.title}
-                      </button>
-                    ))}
-                </div>
-
-                <label>
-                  Title
-                  <input
-                    placeholder={selectedKind === 'use_case' ? '例如 檔期預告' : '例如 回流可追蹤'}
-                    value={form.title}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, kind: selectedKind, title: event.target.value }))
-                    }
-                  />
-                </label>
-
-                <label>
-                  Summary
-                  <textarea
-                    rows={3}
-                    placeholder="描述這個 use case / benefit 主要要解的事"
-                    value={form.summary}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        kind: selectedKind,
-                        summary: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-
-                <div>
-                  <span className="field-label">Standard tags</span>
-                  <div className="checkbox-grid">
-                    {standardTagBank[selectedKind].map((tag) => (
-                      <label key={tag} className="check-chip">
-                        <input
-                          type="checkbox"
-                          checked={form.standardTags.includes(tag)}
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              kind: selectedKind,
-                              standardTags: event.target.checked
-                                ? [...current.standardTags, tag]
-                                : current.standardTags.filter((item) => item !== tag),
-                            }))
-                          }
-                        />
-                        <span>{tag}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <label>
-                  Freeform tags
-                  <input
-                    placeholder="comma, separated"
-                    value={form.freeformTags}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        kind: selectedKind,
-                        freeformTags: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-
-                <label>
-                  Notes
-                  <textarea
-                    rows={2}
-                    placeholder="可選，補充內部備註"
-                    value={form.notes}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, kind: selectedKind, notes: event.target.value }))
-                    }
-                  />
-                </label>
-
-                <button className="primary-button" type="button" onClick={handleSaveRecord}>
-                  {selectedKind === 'use_case' ? 'Save use case' : 'Save benefit'}
-                </button>
-              </aside>
-            </div>
-
-            <aside className="focus-rail">
-              <article className="focus-card">
-                <p className="eyebrow">Current setup</p>
-                <h3>
-                  {activeLibrary.find((record) => record.id === batchForm.useCaseId)?.title ?? '尚未選 use case'}
-                </h3>
-                <p className="helper-copy">
-                  先決定這次的 use case，再用 3 到 5 個 benefits 組出一個清楚主軸。
-                </p>
-                <div className="tag-row">
-                  {batchForm.benefitIds
-                    .map((id) => activeLibrary.find((record) => record.id === id))
-                    .filter((record): record is StrategyRecord => Boolean(record))
-                    .map((record) => (
-                      <span key={record.id} className="tag">
-                        {record.title}
-                      </span>
-                    ))}
-                </div>
-              </article>
-
-              <article className="focus-card subdued">
-                <p className="eyebrow">Quick status</p>
-                <div className="focus-metrics">
-                  <span>Use cases {activeLibrary.filter((record) => record.kind === 'use_case').length}</span>
-                  <span>Benefits {activeLibrary.filter((record) => record.kind === 'benefit').length}</span>
-                  <span>Latest batch {latestBatch ? formatDate(latestBatch.createdAt) : 'none'}</span>
-                </div>
-              </article>
-            </aside>
-          </div>
-
-          <button
-            className="primary-button"
-            type="button"
-            onClick={handleGenerateBatch}
-            disabled={isGeneratingBatch}
-          >
-            {isGeneratingBatch ? 'Generating 3 creatives…' : 'Generate Ads'}
-          </button>
-
-          {batchStatusMessage ? <p className="helper-copy status-banner">{batchStatusMessage}</p> : null}
-          {requestError ? <p className="helper-copy error-banner">{requestError}</p> : null}
-
-          {latestBatch ? (
-            <div className="metadata-strip">
-              <span>批次：{latestBatch.id}</span>
-              <span>版本：{latestBatch.promptVersion}</span>
-              <span>建立時間：{formatDate(latestBatch.createdAt)}</span>
-            </div>
-          ) : null}
-        </section>
-
-        <section ref={reviewSectionRef} className="panel span-two panel-priority">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">02 / Review + approve</p>
-              <h2>挑出可投的版本，再補齊對應平台尺寸</h2>
-            </div>
-            <span className="pill muted">平台整批共用</span>
-          </div>
-
-          {batchCreatives.length > 0 ? (
-            <div className="batch-platform-picker">
-              <span className="field-label">Platforms</span>
-              <div className="platform-grid">
-                {platformOptions.map((platform) => (
-                  <button
-                    key={platform}
-                    type="button"
-                    className={
-                      selectedBatchPlatforms.includes(platform)
-                        ? 'reason-chip active'
-                        : 'reason-chip'
-                    }
-                    onClick={() => toggleBatchPlatform(platform)}
-                  >
-                    <PlatformBadge platform={platform} />
-                  </button>
-                ))}
-              </div>
-              <p className="helper-copy">
-                {selectedBatchPlatforms.length > 0
-                  ? `已選平台：${selectedBatchPlatforms.join(', ')}，下面每張素材按 Approved 都會用同一組平台。`
-                  : '先選至少 1 個平台，下面每張素材都會共用這組平台。'}
-              </p>
+            <div className="segment">
               <button
+                className={selectedKind === 'use_case' ? 'segment-button active' : 'segment-button'}
+                onClick={() => {
+                  setSelectedKind('use_case')
+                  setForm((current) => ({ ...current, kind: 'use_case' }))
+                }}
                 type="button"
-                className="primary-button"
-                disabled={isApprovingBatch || pendingBatchCreatives.length === 0}
-                onClick={approveBatchCreatives}
               >
-                {isApprovingBatch ? `Approving ${pendingBatchCreatives.length} creatives…` : `Approve all ${pendingBatchCreatives.length} creatives`}
+                Use case
+              </button>
+              <button
+                className={selectedKind === 'benefit' ? 'segment-button active' : 'segment-button'}
+                onClick={() => {
+                  setSelectedKind('benefit')
+                  setForm((current) => ({ ...current, kind: 'benefit' }))
+                }}
+                type="button"
+              >
+                Benefit
               </button>
             </div>
-          ) : null}
-
-          <div className="creative-grid">
-            {isGeneratingBatch ? (
-              <article className="creative-empty-state loading-state">
-                <h3>素材生成中</h3>
-                <p>請稍候，系統正在等待 creative.bktsai.link 回傳 3 組 1:1 審稿素材與文案。</p>
-              </article>
-            ) : batchCreatives.length === 0 ? (
-              <article className="creative-empty-state">
-                <h3>還沒有回傳素材</h3>
-                <p>上傳 logo 後按 `Generate Ads`，這裡才會出現 creative.bktsai.link 回來的 1:1 素材與文案。</p>
-              </article>
-            ) : (
-              batchCreatives.map((creative) => (
-                <article key={creative.id} className={`creative-card mode-${slugify(creative.visualMode)}`}>
-                  <div className="creative-preview-frame">
-                    <img
-                      className="creative-preview-image"
-                      src={creative.squareAsset}
-                      alt={`${creative.metadata.productName} ${creative.creativeVersion}`}
-                    />
-                  </div>
-                  <div className="creative-poster">
-                    <p className="poster-kicker">{creative.kicker}</p>
-                    <h3>{creative.headline}</h3>
-                    <p>{creative.body}</p>
-                    <strong>{creative.deliveryNote}</strong>
-                    <footer>
-                      <span>版本 {creative.creativeVersion}</span>
-                      <span>{formatStylePreset(creative.stylePreset)}</span>
-                    </footer>
-                  </div>
-                  <div className="creative-meta">
-                    <div className="tag-row">
-                      <span className="tag">風格 {formatStylePreset(creative.stylePreset)}</span>
-                      <span className="tag">模特兒 {formatTalentLabel(creative.talent, creative.modelSetting)}</span>
-                      <span className="tag">{getToneLabel(creative.tone)}</span>
-                      <span className="tag">感性 {creative.voiceBalance}/5</span>
-                      <span className="tag subtle">1:1 {assetLabelFromUrl(creative.squareAsset)}</span>
-                    </div>
-                    <div className="creative-return">
-                      <span>{creative.metadata.productName}</span>
-                      <span>{creative.assetDeliverables.length > 0 ? `已回傳 ${creative.assetDeliverables.length} 個版位` : '等待平台版位'}</span>
-                    </div>
-                    <div className="review-actions">
-                      <button
-                        type="button"
-                        className={creative.reviewStatus === 'approved' ? 'mini-button success' : 'mini-button'}
-                        disabled={approvingCreativeId === creative.id || isApprovingBatch}
-                        onClick={() => approveCreative(creative.id)}
-                      >
-                        {approvingCreativeId === creative.id ? 'Approving…' : 'Approved'}
-                      </button>
-                      <p className="helper-copy">
-                        {creative.selectedPlatforms.length > 0
-                          ? `已選平台：${creative.selectedPlatforms.join(', ')}，Approved 後會回傳這些平台需要的正確尺寸。`
-                          : '先選至少 1 個平台，系統才會向 creative.bktsai.link 取回正確尺寸。'}
-                      </p>
-                      <div className="reason-wrap">
-                        {rejectionReasons.map((reason) => (
-                          <button
-                            key={reason}
-                            type="button"
-                            className={
-                              creative.reviewStatus === 'rejected' &&
-                              creative.rejectionReason === reason
-                                ? 'reason-chip active'
-                                : 'reason-chip'
-                            }
-                            onClick={() => rejectCreative(creative.id, reason)}
-                          >
-                            {reason}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {creative.assetDeliverables.length > 0 || creative.copyDeliverables || creative.finalCopy ? (
-                      <div className="returned-payload">
-                        <p className="field-label">已回傳內容</p>
-                        {creative.copyDeliverables?.meta_ad ? (
-                          <div className="returned-copy">
-                            <span>Meta primary text: {creative.copyDeliverables.meta_ad.primaryText}</span>
-                            <span>Meta headline: {creative.copyDeliverables.meta_ad.headline}</span>
-                            <span>Meta description: {creative.copyDeliverables.meta_ad.description || 'none'}</span>
-                            <span>Meta URL: {creative.copyDeliverables.meta_ad.destinationUrl || 'none'}</span>
-                          </div>
-                        ) : null}
-                        {creative.copyDeliverables?.google_ads ? (
-                          <div className="returned-copy">
-                            <span>Google headlines: {creative.copyDeliverables.google_ads.headline}</span>
-                            <span>Google descriptions: {creative.copyDeliverables.google_ads.description}</span>
-                            <span>Google paths: {creative.copyDeliverables.google_ads.path1} / {creative.copyDeliverables.google_ads.path2}</span>
-                            <span>Google URL: {creative.copyDeliverables.google_ads.destinationUrl || 'none'}</span>
-                          </div>
-                        ) : null}
-                        {creative.assetDeliverables.length > 0 ? (
-                          <div className="returned-assets">
-                            {creative.assetDeliverables.map((asset) => (
-                              <a
-                                key={`${asset.platform}-${asset.surface}-${asset.aspectRatio}-${asset.url}`}
-                                className="returned-asset-card"
-                                href={asset.url}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <strong>
-                                  <PlatformBadge platform={getPlatformLabel(asset.platform)} compact />
-                                </strong>
-                                <span>{asset.surface}</span>
-                                <span>{asset.aspectRatio}</span>
-                                <span>{asset.width} × {asset.height}</span>
-                              </a>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </article>
-              ))
-            )}
           </div>
-        </section>
 
-        <section className="panel span-two">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">03 / Draft builder</p>
-              <h2>把核准素材整理成可以 publish 的 draft</h2>
-            </div>
-            <button className="primary-button" type="button" onClick={createDraftAds}>
-              Build drafts from approved creatives
+          <div className="field-grid">
+            <label>
+              <span>Title</span>
+              <input
+                value={form.title}
+                onChange={(event) => setForm((current) => ({ ...current, title: event.target.value, kind: selectedKind }))}
+                placeholder={selectedKind === 'use_case' ? '例如：會員喚回' : '例如：可追蹤點擊'}
+              />
+            </label>
+            <label className="span-two">
+              <span>Summary</span>
+              <textarea
+                rows={3}
+                value={form.summary}
+                onChange={(event) => setForm((current) => ({ ...current, summary: event.target.value, kind: selectedKind }))}
+              />
+            </label>
+            <label>
+              <span>Standard Tags</span>
+              <select
+                value=""
+                onChange={(event) => {
+                  const value = event.target.value
+                  if (!value) return
+                  setForm((current) => ({
+                    ...current,
+                    kind: selectedKind,
+                    standardTags: current.standardTags.includes(value)
+                      ? current.standardTags
+                      : [...current.standardTags, value],
+                  }))
+                }}
+              >
+                <option value="">選一個 tag</option>
+                {standardTagBank[selectedKind].map((tag) => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Freeform Tags</span>
+              <input
+                value={form.freeformTags}
+                onChange={(event) => setForm((current) => ({ ...current, freeformTags: event.target.value, kind: selectedKind }))}
+                placeholder="逗號分隔"
+              />
+            </label>
+            <label className="span-two">
+              <span>Notes</span>
+              <textarea
+                rows={2}
+                value={form.notes}
+                onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value, kind: selectedKind }))}
+              />
+            </label>
+          </div>
+
+          <div className="pill-row">
+            {form.standardTags.map((tag) => (
+              <button
+                key={tag}
+                className="pill active"
+                type="button"
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    standardTags: current.standardTags.filter((item) => item !== tag),
+                  }))
+                }
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+
+          <div className="panel-actions">
+            <button className="primary-button" type="button" onClick={addLibraryRecord}>
+              Add to library
             </button>
           </div>
 
-          <p className="helper-copy">
-            Ready for draft: {approvedReadyForDraft.length} approved creatives with platforms selected
-          </p>
+          <div className="library-columns">
+            <div>
+              <p className="eyebrow">Use Cases</p>
+              <div className="list-stack">
+                {activeUseCases.map((record) => (
+                  <article key={record.id} className="library-card">
+                    <strong>{record.title}</strong>
+                    <p>{record.summary}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="eyebrow">Benefits</p>
+              <div className="list-stack">
+                {activeBenefits.map((record) => (
+                  <article key={record.id} className="library-card">
+                    <strong>{record.title}</strong>
+                    <p>{record.summary}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
+        </article>
 
-          <div className="draft-list compact-drafts">
-            {state.drafts.map((draft) => (
-              <article key={draft.id} className="draft-card">
-                <div>
-                  <p className="eyebrow">{draft.status}</p>
-                  <h3>{draft.adName}</h3>
-                  <p>{draft.adsetName}</p>
-                  <p className="helper-copy">{draft.campaignName}</p>
-                  <div className="draft-overview-grid">
-                    <span>Product: {draft.metadata.productName}</span>
-                    <span>Objective: {draft.adsPlan.campaign.objective}</span>
-                    <span>Audience: {draft.adsPlan.adSet.audienceType}</span>
-                    <span>Optimize for: {draft.adsPlan.adSet.optimizationGoal}</span>
-                  </div>
-                  <details className="inline-details">
-                    <summary>看投放設定與文案</summary>
-                    <div className="draft-schema">
-                      <span>Funnel: {draft.adsPlan.campaign.funnelStage}</span>
-                      <span>
-                        Window:{' '}
-                        {draft.adsPlan.adSet.audienceWindowDays
-                          ? `${draft.adsPlan.adSet.audienceWindowDays}D`
-                          : 'none'}
-                      </span>
-                      <span>Budget: {draft.adsPlan.adSet.budgetStrategy}</span>
-                      <span>Placement: {draft.adsPlan.adSet.placementStrategy}</span>
-                      <span>Angle family: {draft.adsPlan.ad.angleFamily}</span>
-                      <span>Angle: {draft.adsPlan.ad.angleLabel}</span>
-                      <span>Primary text: {draft.primaryText}</span>
-                      <span>Headline: {draft.headline}</span>
-                      <span>Description: {draft.description}</span>
-                      <span>URL: {draft.destinationUrl}</span>
-                    </div>
-                  </details>
+        <article className="panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Step 2</p>
+              <h2>Generate Review Batch</h2>
+            </div>
+          </div>
+
+          <div className="field-grid">
+            <label>
+              <span>Use Case</span>
+              <select
+                value={batchForm.useCaseId}
+                onChange={(event) => setBatchForm((current) => ({ ...current, useCaseId: event.target.value }))}
+              >
+                {activeUseCases.map((record) => (
+                  <option key={record.id} value={record.id}>
+                    {record.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Product Name</span>
+              <input
+                value={batchForm.productName}
+                onChange={(event) => setBatchForm((current) => ({ ...current, productName: event.target.value }))}
+              />
+            </label>
+            <label className="span-two">
+              <span>Benefits</span>
+              <div className="pill-row">
+                {activeBenefits.map((benefit) => {
+                  const active = batchForm.benefitIds.includes(benefit.id)
+                  return (
+                    <button
+                      key={benefit.id}
+                      className={active ? 'pill active' : 'pill'}
+                      type="button"
+                      onClick={() =>
+                        setBatchForm((current) => ({
+                          ...current,
+                          benefitIds: active
+                            ? current.benefitIds.filter((item) => item !== benefit.id)
+                            : [...current.benefitIds, benefit.id],
+                        }))
+                      }
+                    >
+                      {benefit.title}
+                    </button>
+                  )
+                })}
+              </div>
+            </label>
+            <label>
+              <span>Product Link</span>
+              <input
+                value={batchForm.productLink}
+                onChange={(event) => setBatchForm((current) => ({ ...current, productLink: event.target.value }))}
+                placeholder="https://"
+              />
+            </label>
+            <label>
+              <span>Logo</span>
+              <input type="file" accept="image/*" onChange={(event) => setLogoFile(event.target.files?.[0] ?? null)} />
+            </label>
+            <label>
+              <span>Product Image</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(event) => setProductImageFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label className="span-two">
+              <span>Additional Notes</span>
+              <textarea
+                rows={3}
+                value={batchForm.additionalNotes}
+                onChange={(event) => setBatchForm((current) => ({ ...current, additionalNotes: event.target.value }))}
+              />
+            </label>
+          </div>
+
+          <div className="panel-actions">
+            <button className="primary-button" type="button" disabled={isGeneratingBatch} onClick={handleGenerateBatch}>
+              {isGeneratingBatch ? 'Generating…' : 'Generate review creatives'}
+            </button>
+          </div>
+
+          {batchStatusMessage ? <p className="status-note success">{batchStatusMessage}</p> : null}
+          {requestError ? <p className="status-note error">{requestError}</p> : null}
+        </article>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Step 3</p>
+            <h2>Review Queue</h2>
+          </div>
+          <div className="panel-actions compact">
+            <button className="primary-button" type="button" disabled={isApprovingBatch} onClick={approveAllPending}>
+              {isApprovingBatch ? 'Approving…' : 'Approve all selected'}
+            </button>
+          </div>
+        </div>
+
+        {latestBatch ? (
+          <div className="batch-banner">
+            <div>
+              <strong>{latestBatch.productName}</strong>
+              <span>{latestBatch.angleId}</span>
+            </div>
+            <div>
+              <strong>{pendingCreatives.length}</strong>
+              <span>pending</span>
+            </div>
+            <div>
+              <strong>{approvedCreatives.length}</strong>
+              <span>approved</span>
+            </div>
+          </div>
+        ) : (
+          <p className="empty-state">還沒有 batch。先從上面生成 review creatives。</p>
+        )}
+
+        <div className="creative-grid">
+          {latestBatchCreatives.map((creative) => {
+            const primaryCopy = getPrimaryCopy(creative)
+            return (
+              <article key={creative.id} className="creative-card">
+                <div className="creative-image-wrap">
+                  <img src={creative.squareAsset} alt={creative.headline} className="creative-image" />
+                  <span className={`status-chip ${creative.reviewStatus}`}>{creative.reviewStatus}</span>
                 </div>
-                <div className="draft-actions">
-                  <span className="pill active">{draft.metadata.angleId}</span>
-                  {draft.metadata.selectedPlatforms.map((platform) => (
-                    <span key={platform} className="pill muted">
-                      {platform}
-                    </span>
+                <div className="creative-copy">
+                  <p className="eyebrow">{creative.creativeVersion}</p>
+                  <h3>{creative.headline}</h3>
+                  <p className="muted">{creative.kicker}</p>
+                  <p>{creative.body}</p>
+                  <div className="meta-row">
+                    <span>{creative.copyMode}</span>
+                    <span>{formatStylePreset(creative.stylePreset)}</span>
+                    <span>{creative.visualMode}</span>
+                  </div>
+                </div>
+                <div className="platform-grid">
+                  {platformOptions.map((platform) => (
+                    <label key={platform} className="checkbox-pill">
+                      <input
+                        type="checkbox"
+                        checked={creative.selectedPlatforms.includes(platform)}
+                        onChange={() => toggleCreativePlatform(creative.id, platform)}
+                      />
+                      <span>{platform}</span>
+                    </label>
                   ))}
-                  {draft.assetDeliverables.map((asset) => (
-                    <span key={asset} className="pill muted">
-                      {asset}
-                    </span>
-                  ))}
-                  {draft.status === 'draft' ? (
-                    <button
-                      type="button"
-                      className="mini-button success"
-                      onClick={() => prepareDraftForPublish(draft.id)}
-                    >
-                      Prepare publish bundle
-                    </button>
-                  ) : null}
-                  {draft.status === 'ready_to_publish' ? (
-                    <button
-                      type="button"
-                      className="mini-button success"
-                      onClick={() => publishDraftToAdsMcp(draft.id)}
-                      disabled={publishingDraftId === draft.id}
-                    >
-                      {publishingDraftId === draft.id ? 'Publishing…' : 'Publish to Facebook'}
-                    </button>
-                  ) : null}
-                  {draft.status === 'publishing' ? (
-                    <span className="helper-copy">Publishing in progress…</span>
-                  ) : null}
-                  {draft.status === 'published' ? (
-                    <span className="helper-copy">
-                      Published {draft.publishedAt ? formatDate(draft.publishedAt) : ''}
-                    </span>
-                  ) : null}
-                  {draft.status === 'failed' ? (
-                    <>
-                      <span className="helper-copy">
-                        Failed: {draft.publishBundle.lastError ?? 'unknown error'}
-                      </span>
-                      <button
-                        type="button"
-                        className="mini-button"
-                        onClick={() => prepareDraftForPublish(draft.id)}
-                      >
-                        Rebuild bundle
-                      </button>
-                    </>
-                  ) : null}
+                </div>
+                <div className="panel-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={approvingCreativeId === creative.id}
+                    onClick={() => approveCreative(creative.id)}
+                  >
+                    {approvingCreativeId === creative.id ? 'Approving…' : 'Approve to DB'}
+                  </button>
+                  <select
+                    value=""
+                    onChange={(event) => {
+                      if (event.target.value) {
+                        rejectCreative(creative.id, event.target.value)
+                      }
+                    }}
+                  >
+                    <option value="">Reject reason</option>
+                    {rejectionReasons.map((reason) => (
+                      <option key={reason} value={reason}>
+                        {reason}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {primaryCopy ? (
+                  <div className="approved-copy-box">
+                    <strong>Approved Copy</strong>
+                    <p>{primaryCopy.primaryText}</p>
+                    <span>{primaryCopy.headline}</span>
+                  </div>
+                ) : null}
+
+                {creative.assetDeliverables.length > 0 ? (
+                  <div className="asset-list">
+                    {creative.assetDeliverables.map((asset) => (
+                      <a key={`${asset.platform}-${asset.surface}-${asset.url}`} href={asset.url} target="_blank" rel="noreferrer">
+                        {asset.platform} · {asset.surface} · {asset.aspectRatio}
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </article>
+            )
+          })}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Approved Archive</p>
+            <h2>IndexedDB Database</h2>
+          </div>
+          <div className="panel-actions compact">
+            <input
+              className="search-input"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search copy / platform / version"
+            />
+            <button className="ghost-button" type="button" onClick={() => void loadArchive()}>
+              Reload
+            </button>
+          </div>
+        </div>
+
+        <div className="archive-banner">
+          <span>DB status: {archiveStatus}</span>
+          <span>{archive.length} rows</span>
+          <span>來源條件：只有 approved creative 才會寫入</span>
+        </div>
+
+        {archiveMessage ? <p className="status-note success">{archiveMessage}</p> : null}
+        {archiveError ? <p className="status-note error">{archiveError}</p> : null}
+
+        {filteredArchive.length === 0 ? (
+          <p className="empty-state">資料庫目前還沒有 approved creative。</p>
+        ) : (
+          <div className="archive-list">
+            {filteredArchive.map((item) => (
+              <article key={item.id} className="archive-card">
+                <img src={item.squareAsset} alt={item.headline} className="archive-thumb" />
+                <div className="archive-copy">
+                  <div className="archive-header">
+                    <div>
+                      <p className="eyebrow">{item.creativeVersion}</p>
+                      <h3>{item.finalCopy?.headline || item.headline}</h3>
+                    </div>
+                    <span>{formatDateTime(item.approvedAt)}</span>
+                  </div>
+                  <p>{item.finalCopy?.primaryText || item.body}</p>
+                  <div className="meta-row">
+                    <span>{item.productName}</span>
+                    <span>{item.selectedPlatforms.join(' / ')}</span>
+                    <span>{item.copyMode}</span>
+                  </div>
+                  <div className="asset-list">
+                    {item.assetDeliverables.map((asset) => (
+                      <a key={`${item.id}-${asset.url}`} href={asset.url} target="_blank" rel="noreferrer">
+                        {asset.platform} · {asset.surface} · {asset.aspectRatio}
+                      </a>
+                    ))}
+                  </div>
                 </div>
               </article>
             ))}
           </div>
-        </section>
-
-        <section className="panel span-two">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">04 / Facebook publish</p>
-              <h2>連線 Facebook，確認帳號後直接送出</h2>
-            </div>
-            <span className="pill active">{state.adsMcpGateway.connectionStatus}</span>
-          </div>
-
-          <div className="gateway-auth-card">
-            <div>
-              <p className="eyebrow">facebook ads access</p>
-              <h3>
-                {state.adsMcpGateway.connectionStatus === 'connected'
-                  ? state.adsMcpGateway.businessName ?? 'Facebook connected'
-                  : '還沒連上 Facebook Ads'}
-              </h3>
-              <p className="helper-copy">
-                {state.adsMcpGateway.connectionStatus === 'connected'
-                  ? '先選 ad account、pixel、Page，再往下看 live structure。'
-                  : '按下後會直接跳 Meta OAuth；授權完成後，系統會自動抓回可用的 ad account、pixel、Page。'}
-              </p>
-            </div>
-            <div className="draft-actions">
-              {state.adsMcpGateway.connectionStatus !== 'connected' ? (
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={connectFacebookAds}
-                  disabled={isConnectingFacebook}
-                >
-                  {isConnectingFacebook ? 'Connecting…' : 'Connect Facebook'}
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="mini-button"
-                    onClick={connectFacebookAds}
-                    disabled={isConnectingFacebook}
-                  >
-                    Reconnect
-                  </button>
-                  <button
-                    type="button"
-                    className="mini-button"
-                    onClick={disconnectFacebookAds}
-                  >
-                    Disconnect
-                  </button>
-                  <button
-                    type="button"
-                    className="mini-button"
-                    onClick={() => setStructureRefreshKey((current) => current + 1)}
-                    disabled={accountStructureSnapshot.status === 'loading'}
-                  >
-                    {accountStructureSnapshot.status === 'loading'
-                      ? 'Syncing structure…'
-                      : 'Refresh structure'}
-                  </button>
-                  <button
-                    type="button"
-                    className="mini-button"
-                    onClick={jumpToStructureSection}
-                  >
-                    Jump to structure
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          {state.adsMcpGateway.connectionStatus === 'connected' ? (
-            <div className="gateway-stack">
-              <div className="gateway-overview-grid">
-                <article className="overview-card">
-                  <span>目前帳號</span>
-                  <strong>
-                    {selectedAdAccount
-                      ? `${selectedAdAccount.name} · ${selectedAdAccount.accountId}`
-                      : '尚未選擇'}
-                  </strong>
-                </article>
-                <article className="overview-card">
-                  <span>目前 pixel</span>
-                  <strong>{selectedPixel ? selectedPixel.name : '尚未選擇'}</strong>
-                </article>
-                <article className="overview-card">
-                  <span>目前 Page</span>
-                  <strong>{selectedPage ? selectedPage.name : '尚未選擇'}</strong>
-                </article>
-                <article className="overview-card">
-                  <span>可用資產</span>
-                  <strong>
-                    {state.adsMcpGateway.availableAdAccounts.length} accounts ·{' '}
-                    {state.adsMcpGateway.availablePixels.length} pixels ·{' '}
-                    {state.adsMcpGateway.availablePages.length} pages
-                  </strong>
-                </article>
-              </div>
-
-              <div className="gateway-grid">
-                <label className="rule-field">
-                  <span>Ad account</span>
-                  <input
-                    type="search"
-                    placeholder="搜尋帳號名稱或 ID，例如 lihi.io / 415404632649857"
-                    value={adAccountQuery}
-                    onChange={(event) => setAdAccountQuery(event.target.value)}
-                  />
-                  <select
-                    value={state.adsMcpGateway.adAccountId}
-                    onChange={(event) => void selectFacebookAdAccount(event.target.value)}
-                  >
-                    {visibleAdAccounts.map((account) => (
-                      <option key={account.id} value={account.id}>
-                        {account.name} · {account.currency} · {account.accountId}
-                      </option>
-                    ))}
-                  </select>
-                  <small>
-                    顯示 {filteredAdAccounts.length} / {state.adsMcpGateway.availableAdAccounts.length} 個
-                  </small>
-                </label>
-                <label className="rule-field">
-                  <span>Pixel</span>
-                  <select
-                    value={state.adsMcpGateway.pixelId}
-                    onChange={(event) => updateAdsMcpGateway({ pixelId: event.target.value })}
-                  >
-                    {state.adsMcpGateway.availablePixels.map((pixel) => (
-                      <option key={pixel.id} value={pixel.id}>
-                        {pixel.name} · {pixel.id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="rule-field">
-                  <span>Facebook Page</span>
-                  <select
-                    value={state.adsMcpGateway.pageId}
-                    onChange={(event) => selectFacebookPage(event.target.value)}
-                  >
-                    {state.adsMcpGateway.availablePages.length > 0 ? (
-                      state.adsMcpGateway.availablePages.map((page) => (
-                        <option key={page.id} value={page.id}>
-                          {page.name} · {page.id}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">沒有抓到可用 Page，請先 Reconnect 授權 pages_show_list</option>
-                    )}
-                  </select>
-                </label>
-              </div>
-            </div>
-          ) : null}
-
-          {publishStatusMessage ? <div className="status-banner">{publishStatusMessage}</div> : null}
-          {state.adsMcpGateway.lastError ? (
-            <div className="error-banner">{state.adsMcpGateway.lastError}</div>
-          ) : null}
-          {state.adsMcpGateway.connectionStatus === 'connected' ? (
-            <div ref={structureSectionRef} className="account-structure-panel">
-              <div className="panel-header compact">
-                <div>
-                  <p className="eyebrow">live structure</p>
-                  <h3>Live campaign structure</h3>
-                  <p className="helper-copy">主畫面只留目前帳號的 campaign、ad set、ad，方便直接查看。</p>
-                </div>
-                <span className="pill muted">{accountStructureSnapshot.status}</span>
-              </div>
-
-              <div className="builder-flow">
-                <span>{accountStructureSnapshot.campaigns.length} campaigns</span>
-                <span>{accountStructureSnapshot.adSets.length} ad sets</span>
-                <span>{accountStructureSnapshot.ads.length} ads</span>
-                <span>
-                  Last sync:{' '}
-                  {accountStructureSnapshot.lastSyncedAt
-                    ? formatDate(accountStructureSnapshot.lastSyncedAt)
-                    : 'none'}
-                </span>
-              </div>
-
-              {accountStructureSnapshot.error ? (
-                <div className="error-banner">{accountStructureSnapshot.error}</div>
-              ) : null}
-
-              {accountStructureSnapshot.status === 'ready' &&
-              accountStructureSnapshot.campaigns.length > 0 ? (
-                <>
-                  <div className="account-structure-grid">
-                  <article className="structure-card">
-                    <div className="structure-card-header">
-                      <h4>Campaigns</h4>
-                      <span className="pill muted">{accountStructureSnapshot.campaigns.length}</span>
-                    </div>
-                    <div className="structure-list">
-                      {accountStructureSnapshot.campaigns.map((campaign) => {
-                        const stats = campaignStats.get(campaign.id)
-                        return (
-                          <button
-                            key={campaign.id}
-                            type="button"
-                            className={`structure-row ${
-                              campaign.id === activeCampaignId ? 'selected' : ''
-                            }`}
-                            onClick={() => {
-                              setSelectedCampaignId(campaign.id)
-                              setSelectedAdSetId('')
-                              setSelectedAdId('')
-                            }}
-                          >
-                            <div className="structure-row-title">{campaign.name}</div>
-                            <div className="structure-row-meta">{campaign.objective}</div>
-                            <div className="structure-row-pills">
-                              <span className="tag subtle">{campaign.status}</span>
-                              <span className="tag subtle">{campaign.effectiveStatus}</span>
-                            </div>
-                            <div className="structure-row-meta">
-                              {stats?.adSetCount ?? 0} ad sets · {stats?.adCount ?? 0} ads
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </article>
-
-                  <article className="structure-card">
-                    <div className="structure-card-header">
-                      <h4>Ad sets</h4>
-                      <span className="pill muted">{campaignScopedAdSets.length}</span>
-                    </div>
-                    {campaignScopedAdSets.length === 0 ? (
-                      <article className="creative-empty-state compact">
-                        <h3>這個 campaign 目前沒有 ad set</h3>
-                        <p>可以先切別的 campaign，或按 `Refresh structure` 再抓一次。</p>
-                      </article>
-                    ) : (
-                      <div className="structure-list">
-                        {campaignScopedAdSets.map((adSet) => (
-                          <button
-                            key={adSet.id}
-                            type="button"
-                            className={`structure-row ${adSet.id === activeAdSetId ? 'selected' : ''}`}
-                            onClick={() => {
-                              setSelectedAdSetId(adSet.id)
-                              setSelectedAdId('')
-                            }}
-                          >
-                            <div className="structure-row-title">{adSet.name}</div>
-                            <div className="structure-row-meta">{adSet.optimizationGoal}</div>
-                            <div className="structure-row-pills">
-                              <span className="tag subtle">{adSet.status}</span>
-                              <span className="tag subtle">{adSet.effectiveStatus}</span>
-                            </div>
-                            <div className="structure-row-meta">
-                              Budget:{' '}
-                              {adSet.dailyBudget
-                                ? `daily ${adSet.dailyBudget}`
-                                : adSet.lifetimeBudget
-                                  ? `lifetime ${adSet.lifetimeBudget}`
-                                  : 'not set'}
-                            </div>
-                            <div className="structure-row-meta">{adSetStats.get(adSet.id) ?? 0} ads</div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-
-                  <article className="structure-card">
-                    <div className="structure-card-header">
-                      <h4>Ads</h4>
-                      <span className="pill muted">{adSetScopedAds.length}</span>
-                    </div>
-                    {adSetScopedAds.length === 0 ? (
-                      <article className="creative-empty-state compact">
-                        <h3>這個 ad set 目前沒有 ad</h3>
-                        <p>如果剛建立或剛 paused，先 refresh；有資料就會出現在這裡。</p>
-                      </article>
-                    ) : (
-                      <div className="structure-list">
-                        {adSetScopedAds.map((ad) => (
-                          <button
-                            key={ad.id}
-                            type="button"
-                            className={`structure-row ${ad.id === activeAdId ? 'selected' : ''}`}
-                            onClick={() => setSelectedAdId(ad.id)}
-                          >
-                            <div className="structure-row-title">{ad.name}</div>
-                            <div className="structure-row-pills">
-                              <span className="tag subtle">{ad.status}</span>
-                              <span className="tag subtle">{ad.effectiveStatus}</span>
-                            </div>
-                            <div className="structure-row-meta">ID: {ad.id}</div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                  </div>
-
-                  <div className="structure-detail-grid">
-                  <article className="detail-card">
-                    <p className="eyebrow">Selected campaign</p>
-                    <h4>{selectedCampaign?.name ?? '尚未選 campaign'}</h4>
-                    {selectedCampaign ? (
-                      <div className="detail-kv">
-                        <span>Objective</span>
-                        <strong>{selectedCampaign.objective}</strong>
-                        <span>Status</span>
-                        <strong>{selectedCampaign.status}</strong>
-                        <span>Effective</span>
-                        <strong>{selectedCampaign.effectiveStatus}</strong>
-                        <span>Coverage</span>
-                        <strong>
-                          {(campaignStats.get(selectedCampaign.id)?.adSetCount ?? 0)} ad sets /{' '}
-                          {(campaignStats.get(selectedCampaign.id)?.adCount ?? 0)} ads
-                        </strong>
-                      </div>
-                    ) : null}
-                  </article>
-
-                  <article className="detail-card">
-                    <p className="eyebrow">Selected ad set</p>
-                    <h4>{selectedAdSet?.name ?? '尚未選 ad set'}</h4>
-                    {selectedAdSet ? (
-                      <div className="detail-kv">
-                        <span>Optimization</span>
-                        <strong>{selectedAdSet.optimizationGoal}</strong>
-                        <span>Status</span>
-                        <strong>{selectedAdSet.status}</strong>
-                        <span>Budget</span>
-                        <strong>
-                          {selectedAdSet.dailyBudget
-                            ? `daily ${selectedAdSet.dailyBudget}`
-                            : selectedAdSet.lifetimeBudget
-                              ? `lifetime ${selectedAdSet.lifetimeBudget}`
-                              : 'not set'}
-                        </strong>
-                        <span>Ads</span>
-                        <strong>{adSetStats.get(selectedAdSet.id) ?? 0}</strong>
-                      </div>
-                    ) : null}
-                  </article>
-
-                  <article className="detail-card">
-                    <p className="eyebrow">Selected ad</p>
-                    <h4>{selectedAd?.name ?? '尚未選 ad'}</h4>
-                    {selectedAd ? (
-                      <div className="detail-kv">
-                        <span>Status</span>
-                        <strong>{selectedAd.status}</strong>
-                        <span>Effective</span>
-                        <strong>{selectedAd.effectiveStatus}</strong>
-                        <span>Ad ID</span>
-                        <strong>{selectedAd.id}</strong>
-                        <span>Parent ad set</span>
-                        <strong>{selectedAd.adSetId}</strong>
-                      </div>
-                    ) : null}
-                  </article>
-                  </div>
-                </>
-              ) : accountStructureSnapshot.status === 'loading' ? (
-                <article className="creative-empty-state compact">
-                  <h3>正在抓 account structure</h3>
-                  <p>系統會直接從目前選到的 ad account 拉 campaigns、ad sets、ads。</p>
-                </article>
-              ) : (
-                <article className="creative-empty-state compact">
-                  <h3>這個 ad account 還沒有可顯示的投放結構</h3>
-                  <p>如果你確定帳號內有資料，按 `Refresh structure` 再抓一次。</p>
-                </article>
-              )}
-            </div>
-          ) : null}
-
-          <div className="publish-review-shell">
-            <div className="panel-header compact">
-              <div>
-                <p className="eyebrow">Ready bundles</p>
-                <h3>可以直接送出的 draft</h3>
-              </div>
-              <span className="pill active">{publishableDrafts.length} drafts</span>
-            </div>
-
-            {publishableDrafts.length === 0 ? (
-              <article className="creative-empty-state compact">
-                <h3>還沒有 ready 的 publish bundle</h3>
-                <p>先在上面把 draft prepare 成 ready_to_publish。</p>
-              </article>
-            ) : (
-              <div className="publish-review-grid">
-              {publishableDrafts.map((draft) => (
-                <article key={`publish-${draft.id}`} className="draft-card">
-                  <div>
-                    <p className="eyebrow">{draft.status}</p>
-                    <h3>{draft.publishBundle.adPayload.name}</h3>
-                    <p>{draft.publishBundle.adSetPayload.name}</p>
-                    <p className="helper-copy">{draft.publishBundle.campaignPayload.name}</p>
-                    <div className="draft-overview-grid">
-                      <span>Objective: {draft.publishBundle.campaignPayload.objective}</span>
-                      <span>Audience: {draft.publishBundle.adSetPayload.audienceType}</span>
-                      <span>Gateway: {draft.publishBundle.adsMcpPayload.connection.mode}</span>
-                      <span>Ad account: {draft.publishBundle.adsMcpPayload.connection.adAccountId}</span>
-                    </div>
-                  </div>
-
-                  <div className="publish-asset-list">
-                    {draft.publishBundle.assetSelections
-                      .filter((asset) => asset.selected)
-                      .map((asset) => (
-                        <span key={`${draft.id}-${asset.label}`} className="pill muted">
-                          {asset.label}
-                        </span>
-                      ))}
-                  </div>
-
-                  <div className="draft-actions">
-                    {draft.status === 'ready_to_publish' ? (
-                      <button
-                        type="button"
-                        className="mini-button success"
-                        onClick={() => publishDraftToAdsMcp(draft.id)}
-                        disabled={publishingDraftId === draft.id}
-                      >
-                        {publishingDraftId === draft.id ? 'Publishing…' : 'Publish via Ads MCP'}
-                      </button>
-                    ) : null}
-                    {draft.publishBundle.submission.externalAdId ? (
-                      <span className="pill muted">
-                        External ad: {draft.publishBundle.submission.externalAdId}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <details className="inline-details">
-                    <summary>看 bundle 明細與 payload</summary>
-                    <div className="draft-schema">
-                      <span>MCP server: {draft.publishBundle.adsMcpPayload.server}</span>
-                      <span>MCP version: {draft.publishBundle.adsMcpPayload.version}</span>
-                      <span>Primary text: {draft.publishBundle.copyPayload.primaryText}</span>
-                      <span>Headline: {draft.publishBundle.copyPayload.headline}</span>
-                      <span>Description: {draft.publishBundle.copyPayload.description}</span>
-                      <span>URL: {draft.publishBundle.copyPayload.destinationUrl}</span>
-                      <span>
-                        Checklist:
-                        {draft.publishBundle.checklist.hasCopy ? ' copy' : ''}
-                        {draft.publishBundle.checklist.hasDestinationUrl ? ' url' : ''}
-                        {draft.publishBundle.checklist.hasSelectedAssets ? ' assets' : ''}
-                        {draft.publishBundle.checklist.hasMetaAsset ? ' meta' : ''}
-                      </span>
-                    </div>
-                    <pre className="payload-preview">
-                      {JSON.stringify(draft.publishBundle.adsMcpPayload, null, 2)}
-                    </pre>
-                  </details>
-                </article>
-              ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">05 / Performance pulse</p>
-              <h2>只保留目前最需要看的成效摘要</h2>
-            </div>
-            <button className="primary-button" type="button" onClick={syncAirbyteDemo}>
-              Run demo Airbyte sync
-            </button>
-          </div>
-
-          <div className="funnel-row">
-            <article>
-              <span>Spend</span>
-              <strong>{usd.format(funnelTotals.spend)}</strong>
-            </article>
-            <article>
-              <span>LP view</span>
-              <strong>{funnelTotals.landingPageViews}</strong>
-            </article>
-            <article>
-              <span>Register submitted</span>
-              <strong>{funnelTotals.registerSubmitted}</strong>
-            </article>
-            <article>
-              <span>Email verified</span>
-              <strong>{funnelTotals.emailVerifiedSignups}</strong>
-            </article>
-          </div>
-
-          <div className="analytics-list">
-            {state.metrics.map((metric) => {
-              const draft = state.drafts.find((item) => item.id === metric.draftId)
-              return (
-                <article key={metric.id} className="analytics-card">
-                  <div>
-                    <h3>{draft?.adName ?? metric.draftId}</h3>
-                    <p>
-                      CTR {metric.ctr.toFixed(2)}% · CPC {usd.format(metric.cpc)} · verified{' '}
-                      {metric.emailVerifiedSignups}
-                    </p>
-                  </div>
-                  <div className="analytics-numbers">
-                    <span>Spend {usd.format(metric.spend)}</span>
-                    <span>Impressions {metric.impressions}</span>
-                    <span>Frequency {metric.frequency.toFixed(2)}</span>
-                    <span>
-                      CPA{' '}
-                      {metric.costPerVerifiedSignup === null
-                        ? 'n/a'
-                        : usd.format(metric.costPerVerifiedSignup)}
-                    </span>
-                  </div>
-                </article>
-              )
-            })}
-          </div>
-        </section>
-      </main>
+        )}
+      </section>
     </div>
   )
-}
-
-function PlatformBadge({
-  platform,
-  compact = false,
-}: {
-  platform: string
-  compact?: boolean
-}) {
-  const normalized = getPlatformLabel(platform)
-  const tone = getPlatformTone(normalized)
-  const glyph = getPlatformGlyph(normalized)
-
-  return (
-    <span className={compact ? 'platform-badge compact' : 'platform-badge'}>
-      <span className={`platform-pill-icon ${tone}`} aria-hidden="true">
-        {glyph}
-      </span>
-      <span>{normalized}</span>
-    </span>
-  )
-}
-
-function slugify(value: string) {
-  return value
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^\p{L}\p{N}-]+/gu, '')
-    .toLowerCase()
-}
-
-function stringScore(value: string) {
-  return value.split('').reduce((sum, character, index) => {
-    return sum + character.charCodeAt(0) * (index + 11)
-  }, 0)
-}
-
-function lookupRecord(library: StrategyRecord[], recordId: string) {
-  return library.find((record) => record.id === recordId)
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat('zh-TW', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
-}
-
-function buildAssetDeliverables(creative: CreativeAsset) {
-  if (creative.assetDeliverables.length > 0) {
-    return creative.assetDeliverables.map((asset) => {
-      return `${asset.platform}: ${asset.surface} ${asset.aspectRatio} ${asset.width}x${asset.height}`
-    })
-  }
-
-  return creative.selectedPlatforms.map((platform) => {
-    return `${platform}: returned by creative.bktsai.link`
-  })
-}
-
-function assetLabelFromUrl(value: string) {
-  try {
-    const pathname = new URL(value).pathname
-    return pathname.split('/').pop() ?? value
-  } catch {
-    return value
-  }
-}
-
-function safeJsonParse<T>(value: string): T | null {
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return null
-  }
-}
-
-function parseMcpJsonRpcResponse<T>(value: string): McpJsonRpcResponse<T> | null {
-  const direct = safeJsonParse<McpJsonRpcResponse<T>>(value)
-  if (direct) {
-    return direct
-  }
-
-  const eventBlocks = parseServerSentEventBlocks(value)
-  for (const block of eventBlocks) {
-    for (const dataLine of block.data) {
-      const parsed = safeJsonParse<McpJsonRpcResponse<T>>(dataLine)
-      if (parsed) {
-        return parsed
-      }
-    }
-  }
-
-  return null
-}
-
-function parseServerSentEventBlocks(value: string): ServerSentEventBlock[] {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return []
-  }
-
-  return trimmed
-    .split(/\r?\n\r?\n/)
-    .map((chunk) => {
-      const block: ServerSentEventBlock = { data: [] }
-      const lines = chunk.split(/\r?\n/)
-      for (const line of lines) {
-        if (line.startsWith('event:')) {
-          block.event = line.slice('event:'.length).trim()
-        }
-        if (line.startsWith('data:')) {
-          block.data.push(line.slice('data:'.length).trim())
-        }
-      }
-      return block
-    })
-    .filter((block) => block.data.length > 0)
-}
-
-function buildResponsePreview(value: string) {
-  const compact = value.replace(/\s+/g, ' ').trim()
-  return compact.slice(0, 240) || '[empty response]'
-}
-
-function getPlatformTone(platform: string) {
-  switch (platform) {
-    case 'Facebook':
-      return 'facebook'
-    case 'Instagram':
-      return 'instagram'
-    case 'Threads':
-      return 'threads'
-    case 'Google Ads':
-      return 'google-ads'
-    case 'IG Reels':
-      return 'ig-reels'
-    case 'IG Stories':
-      return 'ig-stories'
-    default:
-      return 'default'
-  }
-}
-
-function getPlatformGlyph(platform: string) {
-  switch (platform) {
-    case 'Facebook':
-      return 'f'
-    case 'Instagram':
-      return '◎'
-    case 'Threads':
-      return '@'
-    case 'Google Ads':
-      return 'G'
-    case 'IG Reels':
-      return '▶'
-    case 'IG Stories':
-      return '◐'
-    default:
-      return '•'
-  }
-}
-
-function isMetaPlatform(platform: string) {
-  return ['Facebook', 'Instagram', 'Threads', 'IG Reels', 'IG Stories'].includes(
-    getPlatformLabel(platform),
-  )
-}
-
-async function readErrorMessage(response: Response) {
-  try {
-    const payload = (await response.json()) as { error?: { message?: string } }
-    return payload.error?.message ?? `Request failed with ${response.status}`
-  } catch {
-    return `Request failed with ${response.status}`
-  }
-}
-
-function waitAtLeast(durationMs: number) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, durationMs)
-  })
 }
 
 export default App

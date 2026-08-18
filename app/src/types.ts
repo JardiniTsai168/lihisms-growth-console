@@ -2,205 +2,19 @@ export type LibraryKind = 'use_case' | 'benefit'
 
 export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
-export type DraftStatus =
-  | 'draft'
-  | 'ready_to_publish'
-  | 'publishing'
-  | 'published'
-  | 'failed'
-
 export type Platform = 'Facebook' | 'Instagram' | 'Threads' | 'Google Ads'
 
-export type CampaignObjective = 'conversions' | 'leads'
-
-export type FunnelStage = 'prospecting' | 'retargeting' | 'winback'
-
-export type AudienceType =
-  | 'broad'
-  | 'interest_stack'
-  | 'lookalike'
-  | 'site_visitors'
-  | 'engaged_clickers'
-  | 'lp_view_no_signup'
-  | 'old_leads'
-  | 'dormant_customers'
-  | 'crm_high_intent'
-
-export type BudgetStrategy = 'lowest_cost' | 'cost_cap'
-
-export type OptimizationGoal = 'conversions' | 'landing_page_views' | 'leads'
-
-export type PlacementStrategy = 'advantage_plus' | 'feeds_only' | 'stories_and_reels'
-
-export type AdAngleFamily = 'benefit' | 'use_case'
-
-export type AdsMcpGatewayMode = 'demo' | 'remote' | 'graph_api'
-
-export type AdsAccountOption = {
+export type StrategyRecord = {
   id: string
-  accountId: string
-  name: string
-  currency: string
-}
-
-export type AdsPixelOption = {
-  id: string
-  name: string
-}
-
-export type AdsPageOption = {
-  id: string
-  name: string
-}
-
-export type AdsMcpGatewayConfig = {
-  mode: AdsMcpGatewayMode
-  endpointUrl: string
-  appId: string
-  graphVersion: string
-  adAccountId: string
-  pixelId: string
-  pageId: string
-  authStrategy: 'none' | 'bearer'
-  accessToken: string | null
-  tokenExpiresAt: string | null
-  grantedScopes: string[]
-  oauthState: string | null
-  connectionStatus: 'disconnected' | 'authorizing' | 'fetching_assets' | 'connected' | 'error'
-  businessName: string | null
-  availableAdAccounts: AdsAccountOption[]
-  availablePixels: AdsPixelOption[]
-  availablePages: AdsPageOption[]
-  lastError: string | null
-  lastValidatedAt: string | null
-}
-
-export type AdsMcpSubmission = {
-  mode: AdsMcpGatewayMode
-  requestId: string | null
-  submittedAt: string | null
-  completedAt: string | null
-  responseCode: number | null
-  responseBody: string | null
-  externalCampaignId: string | null
-  externalAdSetId: string | null
-  externalAdId: string | null
-}
-
-export type AdsMcpGatewayRequest = {
-  server: 'https://mcp.facebook.com/ads'
-  operation: 'ads_mcp_tool_sequence_preview'
-  payload: AdsMcpPayloadPreview
-}
-
-export type AdsMcpGatewayResponse = {
-  requestId: string
-  campaignId: string
-  adSetId: string
-  adId: string
-  status: 'accepted' | 'published'
-}
-
-export type PublishAssetSelection = {
-  platform: string
-  surface: string
-  aspectRatio: string
-  url: string
-  width: number | null
-  height: number | null
-  mimeType: string | null
-  label: string
-  priority: 'meta_primary' | 'secondary'
-  selected: boolean
-}
-
-export type PublishChecklist = {
-  hasCopy: boolean
-  hasDestinationUrl: boolean
-  hasSelectedAssets: boolean
-  hasMetaAsset: boolean
-}
-
-export type AdsMcpPayloadPreview = {
-  server: 'meta_ads_mcp'
-  version: 'draft_v1'
-  operation: 'ads_mcp_tool_sequence_preview'
-  connection: {
-    endpoint: string
-    mode: AdsMcpGatewayMode
-    adAccountId: string
-    pixelId: string
-  }
-  campaign: {
-    name: string
-    objective: CampaignObjective
-    buyingType: 'auction'
-    status: 'paused'
-  }
-  adSet: {
-    name: string
-    optimizationGoal: OptimizationGoal
-    budgetStrategy: BudgetStrategy
-    placementStrategy: PlacementStrategy
-    audience: {
-      type: AudienceType
-      geo: string
-      ageRange: string
-      windowDays: number | null
-    }
-  }
-  creative: {
-    name: string
-    primaryText: string
-    headline: string
-    description: string
-    destinationUrl: string
-    assetUrls: string[]
-    selectedPlatforms: Platform[]
-  }
-  ad: {
-    name: string
-    reviewState: DraftStatus
-  }
-}
-
-export type PublishBundle = {
-  campaignPayload: {
-    name: string
-    objective: CampaignObjective
-    funnelStage: FunnelStage
-    market: string
-    buyingType: 'auction'
-  }
-  adSetPayload: {
-    name: string
-    audienceType: AudienceType
-    audienceWindowDays: number | null
-    budgetStrategy: BudgetStrategy
-    optimizationGoal: OptimizationGoal
-    placementStrategy: PlacementStrategy
-    geo: string
-    ageRange: string
-  }
-  adPayload: {
-    name: string
-    angleFamily: AdAngleFamily
-    angleLabel: string
-    copyMode: CreativeAsset['copyMode']
-    selectedPlatforms: Platform[]
-  }
-  copyPayload: {
-    primaryText: string
-    headline: string
-    description: string
-    destinationUrl: string
-  }
-  assetSelections: PublishAssetSelection[]
-  adsMcpPayload: AdsMcpPayloadPreview
-  submission: AdsMcpSubmission
-  checklist: PublishChecklist
-  lastError: string | null
-  preparedAt: string | null
+  kind: LibraryKind
+  title: string
+  summary: string
+  standardTags: string[]
+  freeformTags: string[]
+  status: 'active' | 'archived'
+  notes: string
+  createdAt: string
+  updatedAt: string
 }
 
 export type CopyDeliverables = {
@@ -219,17 +33,14 @@ export type CopyDeliverables = {
   }
 }
 
-export type StrategyRecord = {
-  id: string
-  kind: LibraryKind
-  title: string
-  summary: string
-  standardTags: string[]
-  freeformTags: string[]
-  status: 'active' | 'archived'
-  notes: string
-  createdAt: string
-  updatedAt: string
+export type AssetDeliverable = {
+  platform: string
+  surface: string
+  aspectRatio: string
+  url: string
+  width: number
+  height: number
+  mimeType: string
 }
 
 export type CreativeAsset = {
@@ -260,15 +71,7 @@ export type CreativeAsset = {
     destinationUrl: string
   } | null
   copyDeliverables: CopyDeliverables | null
-  assetDeliverables: Array<{
-    platform: string
-    surface: string
-    aspectRatio: string
-    url: string
-    width: number
-    height: number
-    mimeType: string
-  }>
+  assetDeliverables: AssetDeliverable[]
   metadata: {
     icp: string
     useCaseId: string
@@ -300,90 +103,36 @@ export type CreativeBatch = {
   creativeIds: string[]
 }
 
-export type DraftAd = {
+export type ApprovedArchiveItem = {
   id: string
   creativeId: string
   batchId: string
-  status: DraftStatus
-  campaignName: string
-  adsetName: string
-  adName: string
-  primaryText: string
+  creativeVersion: string
+  angleId: string
+  approvedAt: string
+  selectedPlatforms: Platform[]
+  productName: string
+  useCaseId: string
+  benefitIds: string[]
+  promptVersion: string
+  copyMode: CreativeAsset['copyMode']
   headline: string
-  description: string
-  destinationUrl: string
-  assetDeliverables: string[]
-  publishBundle: PublishBundle
-  adsPlan: {
-    campaign: {
-      objective: CampaignObjective
-      funnelStage: FunnelStage
-      productLine: string
-      market: string
-      campaignName: string
-    }
-    adSet: {
-      audienceType: AudienceType
-      audienceWindowDays: number | null
-      geo: string
-      ageRange: string
-      budgetStrategy: BudgetStrategy
-      optimizationGoal: OptimizationGoal
-      placementStrategy: PlacementStrategy
-      adsetName: string
-    }
-    ad: {
-      angleFamily: AdAngleFamily
-      angleLabel: string
-      copyMode: CreativeAsset['copyMode']
-      adName: string
-    }
-  }
-  metadata: {
-    icp: string
-    useCaseId: string
-    productName: string
-    benefitIds: string[]
-    angleId: string
-    creativeVersion: string
-    selectedPlatforms: Platform[]
-    createdAt: string
-  }
-  createdAt: string
-  publishAttempts: number
-  publishedAt: string | null
-}
-
-export type AnalyticsMetric = {
-  id: string
-  draftId: string
-  creativeId: string
-  spend: number
-  impressions: number
-  frequency: number
-  clicks: number
-  ctr: number
-  cpc: number
-  landingPageViews: number
-  registerSubmitted: number
-  emailVerifiedSignups: number
-  costPerVerifiedSignup: number | null
-  syncedAt: string
-}
-
-export type OptimizationRules = {
-  minSpend: number
-  ctrGoal: number
-  maxCpa: number
-  maxFrequency: number
+  kicker: string
+  body: string
+  squareAsset: string
+  finalCopy: {
+    primaryText: string
+    headline: string
+    description: string
+    destinationUrl: string
+  } | null
+  copyDeliverables: CopyDeliverables | null
+  assetDeliverables: AssetDeliverable[]
+  metadata: CreativeAsset['metadata']
 }
 
 export type AppState = {
   library: StrategyRecord[]
   batches: CreativeBatch[]
   creatives: CreativeAsset[]
-  drafts: DraftAd[]
-  metrics: AnalyticsMetric[]
-  rules: OptimizationRules
-  adsMcpGateway: AdsMcpGatewayConfig
 }

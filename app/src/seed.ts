@@ -1,6 +1,6 @@
-import type { AppState, OptimizationRules, StrategyRecord } from './types'
+import type { AppState, StrategyRecord } from './types'
 
-const now = '2026-08-10T19:00:00.000Z'
+const now = '2026-08-18T05:00:00.000Z'
 
 const record = (
   id: string,
@@ -25,35 +25,6 @@ const record = (
 export const standardTagBank: Record<StrategyRecord['kind'], string[]> = {
   use_case: ['會員喚回', '新品上架', '限時促購', '沉睡顧客喚醒', 'VIP 專屬通知'],
   benefit: ['可追蹤點擊', 'lihi 短網址', '快速上架', '台灣發票', '成效可回溯'],
-}
-
-export const defaultRules: OptimizationRules = {
-  minSpend: 40,
-  ctrGoal: 1.8,
-  maxCpa: 16,
-  maxFrequency: 2.8,
-}
-
-const defaultAdsMcpGateway = {
-  mode: 'remote' as const,
-  endpointUrl: 'https://creative.bktsai.link/internal/meta-ads-mcp',
-  appId: '',
-  graphVersion: 'v26.0',
-  adAccountId: '',
-  pixelId: '',
-  pageId: '',
-  authStrategy: 'none' as const,
-  accessToken: null,
-  tokenExpiresAt: null,
-  grantedScopes: [],
-  oauthState: null,
-  connectionStatus: 'disconnected' as const,
-  businessName: null,
-  availableAdAccounts: [],
-  availablePixels: [],
-  availablePages: [],
-  lastError: null,
-  lastValidatedAt: null,
 }
 
 const library: StrategyRecord[] = [
@@ -105,8 +76,4 @@ export const initialState: AppState = {
   library,
   batches: [],
   creatives: [],
-  drafts: [],
-  metrics: [],
-  rules: defaultRules,
-  adsMcpGateway: defaultAdsMcpGateway,
 }
